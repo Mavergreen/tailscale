@@ -167,14 +167,14 @@ jobs:
         env:
           MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
         run: |
-          cmake --preset cross
-          cmake --build --preset cross
-          ctest --preset cross
+          shipyard-cmake --preset cross
+          shipyard-cmake --build --preset cross
+          shipyard-ctest --preset cross
 
       - name: Build the Sparkle updater (must not link tailscale)
         run: |
-          cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          cmake --build build/updater
+          shipyard-cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build build/updater
           BIN=build/updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
@@ -238,8 +238,7 @@ jobs:
         run: |
           # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
           printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          SH="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"
-          [ -d "$SH" ] || { echo "::error::shipyard scripts not found at $SH"; exit 1; }
+          . build/msc.sh
           mkdir -p in dist
           tar -C in -xzf dl/packaging-inputs.tgz          # restores executable bits
           # Wrap the systray binary into the menu-bar .app the package expects.
@@ -247,7 +246,7 @@ jobs:
           PKG="dist/tailscale-$VER.pkg"
 
           # dist/ in the repo holds the LaunchDaemon/Agent plists + pre/postinstall scripts.
-          SHIPYARD_SCRIPTS="$SH" sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
+          sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
             --tailscaled in/tailscaled --tailscale in/tailscale \
             --systray-app "in/Mavericks Tailscale.app" --updater-app in/TailscaleUpdater.app \
             --daemon-plist "$GITHUB_WORKSPACE/dist/com.tailscale.tailscaled.plist" \
@@ -263,7 +262,7 @@ jobs:
           # enclosure points at the versioned release asset; the client /latest/ feed resolves to this
           # full release immediately, so Sparkle clients pick it up right away.
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
-          sh "$SH/sign_and_appcast.sh" \
+          sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" \
             --channel-title "Tailscale for Mavericks" \
             --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
             --notes-file dist/RELEASE_NOTES.md --pkg "$PKG" > dist/appcast.xml

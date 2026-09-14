@@ -5,7 +5,7 @@ build-cross/
 /UPSTREAM_VERSION
 
 # In-tree CMake output. release.yml configures the Sparkle updater as
-# `cmake -S updater -B build/updater`, so a local reproduction of that step drops a
+# `shipyard-cmake -S updater -B build/updater`, so a local reproduction of that step drops a
 # whole build tree here -- 7.4MB of it, with the installed shipyard's absolute paths
 # baked into CMakeCache.txt. Untracked and unignored is the bad combination: one
 # `git add -A` commits it, and the cache goes stale the moment shipyard moves (it
