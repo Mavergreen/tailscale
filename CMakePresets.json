@@ -1,26 +1,72 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "native",
-      "displayName": "native — build on Mavericks 10.9 (mavericks-golang go126 .pkg)",
+      "displayName": "native \u2014 build on Mavericks 10.9 (mavericks-golang go126 .pkg)",
       "binaryDir": "${sourceDir}/build-native",
-      "cacheVariables": { "MAVERICKS_TAILSCALE_EXPECTED_MODE": "native" }
+      "cacheVariables": {
+        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "native"
+      }
     },
     {
       "name": "cross",
-      "displayName": "cross — build for Mavericks 10.9 on a modern host (go126-cross)",
+      "displayName": "cross \u2014 build for Mavericks 10.9 on a modern host (go126-cross)",
       "binaryDir": "${sourceDir}/build-cross",
-      "cacheVariables": { "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross" }
+      "cacheVariables": {
+        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross"
+      }
+    },
+    {
+      "name": "cross-legacy",
+      "displayName": "cross-legacy \u2014 build for Snow Leopard 10.6 on a modern host (go126-cross + legacy106 floor)",
+      "binaryDir": "${sourceDir}/build-cross-legacy",
+      "cacheVariables": {
+        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross",
+        "MAVERICKS_TAILSCALE_FLOOR": "10.6"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "native", "configurePreset": "native" },
-    { "name": "cross", "configurePreset": "cross" }
+    {
+      "name": "native",
+      "configurePreset": "native"
+    },
+    {
+      "name": "cross",
+      "configurePreset": "cross"
+    },
+    {
+      "name": "cross-legacy",
+      "configurePreset": "cross-legacy"
+    }
   ],
   "testPresets": [
-    { "name": "native", "configurePreset": "native", "output": { "outputOnFailure": true } },
-    { "name": "cross", "configurePreset": "cross", "output": { "outputOnFailure": true } }
+    {
+      "name": "native",
+      "configurePreset": "native",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cross",
+      "configurePreset": "cross",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cross-legacy",
+      "configurePreset": "cross-legacy",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

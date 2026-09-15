@@ -97,3 +97,69 @@ jobs:
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
+
+  build-legacy106:
+    name: Cross-build + legacy106 gate (macos-26)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install mavericks-shipyard
+        uses: ModernMavericks/shipyard/.github/actions/install@v1
+
+      - name: Install patched Go (mavericks-golang cross toolchain)
+        run: |
+          ver="$(cat components/golang/version)"
+          base="https://github.com/ModernMavericks/golang/releases/download/${ver}"
+          curl -fL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; pkg=""; sum=""
+          for pref in golang go126; do
+            cand="${pref}-${gover}-cross-${rev}.pkg"
+            s=$(awk -v f="$cand" '$2==f' SHA256SUMS || true)
+            if [ -n "$s" ]; then pkg="$cand"; sum="$s"; break; fi
+          done
+          [ -n "$pkg" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
+          curl -fL --retry 3 -o "$pkg" "$base/$pkg"
+          printf '%s\n' "$sum" | shasum -a 256 -c -
+          sudo installer -pkg "$pkg" -target /
+          echo "/usr/local/go126-cross/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm the patched cross toolchain is on PATH
+        run: |
+          test "$(command -v go)" = /usr/local/go126-cross/bin/go
+          go version
+
+      - name: Cache SDKs (distinct key from the 10.9 job's cache)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.sdk-cache
+            ${{ github.workspace }}/.sdk106-cache
+          key: macosx-sdk106-v1
+
+      - name: Derive the upstream version from the pin
+        run: sh build/derive-upstream-version.sh
+
+      - name: Build + gate the 10.6-floor binaries (x86_64 / min-10.6 / Core 2 safe)
+        env:
+          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ github.workspace }}/.sdk106-cache
+        run: |
+          cmake --preset cross-legacy
+          cmake --build --preset cross-legacy
+          ctest --preset cross-legacy
+
+      - name: Build the 10.6 updater (must be min-10.6, x86_64)
+        env:
+          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ github.workspace }}/.sdk106-cache
+        run: |
+          VER="$(cat UPSTREAM_VERSION 2>/dev/null || echo 1.0)"
+          sh cmake/build_updater106.sh build/updater106 "$VER"
+          BIN=build/updater106/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater
+          ARCHS=$(lipo -info "$BIN" | sed -n 's/.*: //p')
+          [ "$ARCHS" = "x86_64" ] || { echo "::error::updater archs: $ARCHS (expected x86_64)"; exit 1; }
+          MIN=$(otool -l "$BIN" | awk '/LC_VERSION_MIN_MACOSX/{f=1} f && /version/{print $2; exit}')
+          [ "$MIN" = "10.6" ] || { echo "::error::updater min-version is $MIN, expected 10.6"; exit 1; }

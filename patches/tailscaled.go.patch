@@ -1,13 +1,29 @@
-Report ModernMavericks as the packaging type via Hostinfo.Package.
+Report ModernMavericks as the packaging type via Hostinfo.Package, and root
+the 10.6 floor's shim package into the CLI (whose import graph never reaches
+ipn/ipnauth, where the peercred patch roots it for the daemon (the systray has its own blank import via patches/systray.go.patch)).
 
 --- cmd/tailscaled/tailscaled.go.orig
 +++ cmd/tailscaled/tailscaled.go
-@@ -495,6 +495,8 @@ func run() (err error) {
+@@ -539,6 +539,8 @@
+ 	if app := envknob.App(); app != "" {
  		hostinfo.SetApp(app)
  	}
- 
-+	hostinfo.SetPackage("ModernMavericks")
 +
++	hostinfo.SetPackage("ModernMavericks")
+ 
  	return startIPNServer(context.Background(), logf, publicLogID, sys)
  }
+--- cmd/tailscale/tailscale.go.orig
++++ cmd/tailscale/tailscale.go
+@@ -12,6 +12,11 @@
+ 	"strings"
  
+ 	"tailscale.com/cmd/tailscale/cli"
++
++	// The CLI's import graph never reaches ipn/ipnauth (that is daemon
++	// territory), so the 10.6 floor's shim package is rooted here instead.
++	// darwin_10_6-tagged: compiles to nothing on other floors.
++	_ "tailscale.com/legacy106"
+ )
+ 
+ func main() {

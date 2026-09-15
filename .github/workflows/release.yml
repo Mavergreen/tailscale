@@ -157,11 +157,13 @@ jobs:
           test "$(command -v go)" = /usr/local/go126-cross/bin/go
           go version
 
-      - name: Cache the MacOSX10.9 SDK
+      - name: Cache the MacOSX10.9 SDK + assembled SDK106
         uses: actions/cache@v6
         with:
-          path: ${{ github.workspace }}/.sdk-cache
-          key: macosx10.9-sdk-v1
+          path: |
+            ${{ github.workspace }}/.sdk-cache
+            ${{ github.workspace }}/.sdk106-cache
+          key: macosx10.9-sdk-v2
 
       - name: Build + gate the three Go binaries (x86_64 / min-10.9 / no post-10.9 imports)
         env:
@@ -180,6 +182,22 @@ jobs:
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
 
+      - name: Build + gate the 10.6-floor binaries
+        env:
+          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ github.workspace }}/.sdk106-cache
+        run: |
+          cmake --preset cross-legacy
+          cmake --build --preset cross-legacy
+          ctest --preset cross-legacy
+
+      - name: Build the 10.6 updater
+        env:
+          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ github.workspace }}/.sdk106-cache
+          VER: ${{ steps.ver.outputs.version }}
+        run: sh cmake/build_updater106.sh build/updater106 "$VER"
+
       # Bundle the packaging inputs into ONE tarball so executable bits (the binaries, the updater .app's
       # Mach-Os) survive the artifact round-trip -- artifacts otherwise drop file modes.
       - name: Stage + upload packaging inputs
@@ -190,6 +208,10 @@ jobs:
           cp build-cross/gobin/tailscale        stage/tailscale
           cp build-cross/gobin/tailscale-systray stage/tailscale-systray
           cp -R build/updater/TailscaleUpdater.app stage/TailscaleUpdater.app
+          cp build-cross-legacy/gobin/tailscaled       stage/tailscaled-106
+          cp build-cross-legacy/gobin/tailscale        stage/tailscale-106
+          cp build-cross-legacy/gobin/tailscale-systray stage/tailscale-systray-106
+          cp -R build/updater106/TailscaleUpdater.app stage/TailscaleUpdater106.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
       - uses: actions/upload-artifact@v7
@@ -268,6 +290,24 @@ jobs:
             --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
             --notes-file dist/RELEASE_NOTES.md --pkg "$PKG" > dist/appcast.xml
           echo "=== appcast.xml ==="; cat dist/appcast.xml
+
+          # 10.6-floor pkg: same version, different binaries + install floor.
+          PKG106="dist/tailscale-$VER-macos10.6.pkg"
+          sh cmake/make_app.sh in/tailscale-systray-106 "in/Mavericks Tailscale 106.app" "$VER" "$GITHUB_WORKSPACE/Tailscale.icns" 10.6
+          SHIPYARD_SCRIPTS="$SH" sh cmake/package_pkg_legacy106.sh --out "$PKG106" --version "$VER" \
+            --tailscaled in/tailscaled-106 --tailscale in/tailscale-106 \
+            --systray-app "in/Mavericks Tailscale 106.app" \
+            --updater-app in/TailscaleUpdater106.app \
+            --daemon-plist "$GITHUB_WORKSPACE/dist/com.tailscale.tailscaled.plist" \
+            --systray-agent "$GITHUB_WORKSPACE/dist/com.tailscale.systray.plist" \
+            --dist "$GITHUB_WORKSPACE/dist"
+
+          # Serve a SEPARATE 10.6 appcast (not mixed into the Sparkle feed:
+          # unsigned items confuse 10.9 Sparkle clients). The 10.6 updater
+          # reads this file; the 10.9 Sparkle reads the original appcast.
+          PKG106_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG106")"
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">\n  <channel>\n    <title>Tailscale for Snow Leopard</title>\n    <item>\n      <title>Version %s</title>\n      <sparkle:version>%s</sparkle:version>\n      <sparkle:minimumSystemVersion>10.6</sparkle:minimumSystemVersion>\n      <enclosure url="%s" type="application/octet-stream" />\n    </item>\n  </channel>\n</rss>\n' \
+            "$VER" "$VER" "$PKG106_URL" > dist/appcast-10.6.xml
       # No SHA256SUMS here: publish-release.yml regenerates it over everything it attaches, so the
       # checksums cover the appcast too and no repo hand-rolls that step.
       # Conformance: the .pkg, the appcast and the version we are about to publish must agree with each
@@ -291,6 +331,7 @@ jobs:
           path: |
             dist/*.pkg
             dist/appcast.xml
+            dist/appcast-10.6.xml
             dist/RELEASE_NOTES.md
 
   # Before anything is published: no log of this run, and no file about to be released, carries a

@@ -4,17 +4,30 @@ systray "Connect" action start interactive login on a logged-out node so the log
 URL opens in the system browser (as "tailscale up" would); and add a macOS "Check
 for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
 
+Also blank-imports tailscale.com/legacy106 (the 10.6 floor shims) here, because
+the systray binary's import graph does not reach ipn/ipnauth where the peercred
+patch roots it.
+
+And adds a "Peers" section (online-first, capped at 15; click copies the peer's
+Tailscale IP) -- the upstream menu has no peer list, which is unhelpful on a
+machine whose whole point is reaching the tailnet.
+
 --- client/systray/systray.go.orig
 +++ client/systray/systray.go
-@@ -16,6 +16,7 @@
+@@ -16,6 +16,12 @@
  	"log"
  	"net/http"
  	"os"
 +	"os/exec"
++	"sort"
++
++	// 10.6 floor: the libSystem/Security shims (reachability: the systray
++	// binary does not import ipn/ipnauth, where the peercred patch roots it).
++	_ "tailscale.com/legacy106"
  	"os/signal"
  	"runtime"
  	"slices"
-@@ -62,7 +63,13 @@
+@@ -62,7 +68,13 @@
  		signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
  		select {
  		case <-interrupt:
@@ -29,7 +42,7 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
  		case <-menu.bgCtx.Done():
  		}
  	}()
-@@ -72,7 +79,11 @@
+@@ -72,7 +84,11 @@
  	// set initial title, which is used by the systray package as the ID of the StatusNotifierItem.
  	// This value will get overwritten later as the client status changes.
  	// This must be called before systray.Run.
@@ -42,7 +55,7 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
  
  	systray.Run(menu.onReady, menu.onExit)
  }
-@@ -95,13 +106,14 @@
+@@ -95,13 +111,14 @@
  	bgCancel context.CancelFunc
  
  	// Top-level menu items
@@ -64,10 +77,60 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
  
  	rebuildCh  chan struct{} // triggers a menu rebuild
  	accountsCh chan ipn.ProfileID
-@@ -347,6 +359,26 @@
+@@ -321,6 +338,48 @@
+ 		menu.self.Disable()
+ 	}
+ 	systray.AddSeparator()
++
++	// Peers: the tailnet's other devices, online-first, capped for menu
++	// sanity. Clicking a peer copies its Tailscale IP (same affordance as
++	// the per-device copy action elsewhere in the menu).
++	if menu.status != nil && len(menu.status.Peer) > 0 {
++		peers := systray.AddMenuItem("Peers", "")
++		type peerEntry struct {
++			name string
++			ps   *ipnstate.PeerStatus
++		}
++		var entries []peerEntry
++		for _, ps := range menu.status.Peer {
++			entries = append(entries, peerEntry{
++				name: strings.Split(ps.HostName, ".")[0], ps: ps})
++		}
++		sort.Slice(entries, func(i, j int) bool {
++			if entries[i].ps.Online != entries[j].ps.Online {
++				return entries[i].ps.Online
++			}
++			return entries[i].name < entries[j].name
++		})
++		if len(entries) > 15 {
++			entries = entries[:15]
++		}
++		for _, e := range entries {
++			title := e.name
++			if len(e.ps.TailscaleIPs) > 0 {
++				title = fmt.Sprintf("%s (%s)", e.name, e.ps.TailscaleIPs[0])
++			}
++			if !e.ps.Online {
++				title += " — offline"
++			}
++			item := peers.AddSubMenuItem(title, "Click to copy this peer's Tailscale IP")
++			onClick(ctx, item, func(ctx context.Context) {
++				select {
++				case <-ctx.Done():
++				default:
++					menu.copyTailscaleIP(e.ps)
++				}
++			})
++		}
++	}
+ 
+ 	if !menu.readonly {
+ 		menu.rebuildExitNodeMenu(ctx)
+@@ -346,6 +405,40 @@
+ 		}
  	})
  	menu.rebuildMenu.Enable()
- 
++
 +	// On macOS (the ModernMavericks packaging) offer a manual update check that
 +	// hands off to the bundled Sparkle updater. Launching its executable with
 +	// --user runs Sparkle's interactive check (update dialog, or "you're up to
@@ -75,9 +138,22 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
 +	// --background. Reap the child so a long-lived menu bar app doesn't leave
 +	// zombies across repeated checks.
 +	if runtime.GOOS == "darwin" {
++		// Only show the item when the bundled updater binary actually exists
++		// (the legacy106 floor pkg deliberately omits the Sparkle updater).
++		// Probe both bundle names (the 10.9 Sparkle updater and the 10.6 ObjC updater)
++		updaterPath := ""
++		// Probe the 10.6 updater FIRST: if both are installed (a 10.6 pkg
++		// replaced a 10.9 install), the 10.9 Sparkle binary is incompatible.
++		for _, p := range []string{
++			"/Library/Application Support/ModernMavericks/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater",
++			"/Library/Application Support/ModernMavericks/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater",
++		} {
++			if _, err := os.Stat(p); err == nil { updaterPath = p; break }
++		}
++		if updaterPath != "" {
 +		menu.checkUpdates = systray.AddMenuItem("Check for updates", "")
 +		onClick(ctx, menu.checkUpdates, func(_ context.Context) {
-+			const updater = "/Library/Application Support/ModernMavericks/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
++			updater := updaterPath
 +			cmd := exec.Command(updater, "--user")
 +			if err := cmd.Start(); err != nil {
 +				log.Printf("error launching updater: %v", err)
@@ -86,15 +162,16 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
 +			go cmd.Wait()
 +		})
 +		menu.checkUpdates.Enable()
++		}
 +	}
-+
+ 
  	menu.quit = systray.AddMenuItem("Quit", "Quit the app")
  	menu.quit.Enable()
- 
-@@ -452,6 +484,17 @@
+@@ -451,6 +544,17 @@
+ 			})
  			if err != nil {
  				log.Printf("error connecting: %v", err)
- 			}
++			}
 +			// Setting WantRunning alone won't authenticate a logged-out node, so
 +			// (like "tailscale up") kick off interactive login when the backend
 +			// needs it. That makes tailscaled emit a BrowseToURL, which
@@ -105,7 +182,6 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
 +				if err := menu.lc.StartLoginInteractive(ctx); err != nil {
 +					log.Printf("error starting interactive login: %v", err)
 +				}
-+			}
+ 			}
  
  		case <-menu.disconnect.ClickedCh:
- 			_, err := menu.lc.EditPrefs(ctx, &ipn.MaskedPrefs{

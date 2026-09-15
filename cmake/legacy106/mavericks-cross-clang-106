@@ -1,0 +1,28 @@
+#!/bin/sh
+# Cross CC for the 10.6 (Snow Leopard) floor: identical to the toolchain's
+# mavericks-cross-clang (same 10.9 SDK, same arch, same -Wl,-U allowances,
+# same MacPorts legacy archive) except:
+#   -mmacosx-version-min=10.6   (LC_VERSION_MIN 10.6; 10.6 dyld refuses newer)
+#   + libLegacy106Support.a     (the 10.6-only symbols, see overlays/legacy106/)
+#
+# The toolchain root arrives via MAVERICKS_GO_PREFIX (set by build_tailscale.sh
+# from the go binary it was given). Flags are passed explicitly per invocation
+# (never through an unquoted multi-argument string -- an SDK cache path with a
+# space would split it).
+set -eu
+PREFIX="${MAVERICKS_GO_PREFIX:?MAVERICKS_GO_PREFIX must point at the go toolchain root}"
+LEGACY106_A="${MAVERICKS_LEGACY106_A:?MAVERICKS_LEGACY106_A must point at the built stubs archive}"
+SDK=$(sh "${MAVERICKS_LEGACY106_ROOT:?}/prepare_sdk106.sh" "$PREFIX" "${MAVERICKS_LEGACY106_ROOT%/cmake/legacy106}")
+for a in "$@"; do
+  case "$a" in -c|-E|-S)
+    exec /usr/bin/clang -arch x86_64 -isysroot "$SDK" -mmacosx-version-min=10.6 "$@"
+    ;;
+  esac
+done
+exec /usr/bin/clang -arch x86_64 -isysroot "$SDK" -mmacosx-version-min=10.6 "$@" \
+  "$PREFIX/lib/libMacportsLegacySupport.a" \
+  "$LEGACY106_A" \
+  -Wl,-U,_SecTrustEvaluateWithError \
+  -Wl,-U,_SecTrustCopyCertificateChain \
+  -Wl,-U,_notify_is_valid_token \
+  -Wl,-U,_xpc_date_create_from_current

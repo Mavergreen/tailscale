@@ -16,3 +16,4 @@ build/updater/
 # Finder, and git prints "non-monotonic index" for every ._pack-*.idx it finds.
 ._*
 .DS_Store
+build-cross-legacy/
