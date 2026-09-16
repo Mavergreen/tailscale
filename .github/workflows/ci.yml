@@ -26,7 +26,8 @@ jobs:
           fetch-depth: 0   # cmake resolves the version from the shipped tags; without them CI would
                            # label every build -mavericks.1 and hide what it is really building
 
-      # shipyard self-registers in the CMake user package registry; consumed via find_package.
+      # Installs the shipyard pkg: shipyard-cmake/-ctest/-cpack land on PATH and SHIPYARD_SCRIPTS is
+      # exported. find_package(MavericksShipyard) resolves inside shipyard-cmake's own prefix.
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
 
@@ -35,8 +36,8 @@ jobs:
       # silently mean no repackage and thinner notes. Fail here instead.
       - name: Guard the ingredient pin declaration
         run: |
-          SCR="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"
-          sh "$SCR/check-ingredient-pins.sh"
+          . build/msc.sh
+          sh "$SHIPYARD_SCRIPTS/check-ingredient-pins.sh"
 
       # The 10.9-correct Go toolchain (mavericks-golang go126 cross .pkg; its go.env CC wrapper supplies
       # the 10.9 SDK + target flags + legacy shim + -Wl,-U allowances). Cross mode: the root CMakeLists
@@ -83,16 +84,16 @@ jobs:
         env:
           MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
         run: |
-          cmake --preset cross
-          cmake --build --preset cross
-          ctest --preset cross
+          shipyard-cmake --preset cross
+          shipyard-cmake --build --preset cross
+          shipyard-ctest --preset cross
 
       # Sparkle updater .app: built every run (catches updater breaks). It must NOT link any Tailscale
       # product (self-update circularity); its own binary is TailscaleUpdater, so skip line 1 of otool.
       - name: Build the Sparkle updater (must not link tailscale)
         run: |
-          cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          cmake --build build/updater
+          shipyard-cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build build/updater
           BIN=build/updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
