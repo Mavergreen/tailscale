@@ -28,10 +28,10 @@ sleep 3
 say "resolver configuration with exit node (100.100.100.100 must be the effective default)"
 scutil --dns > "$OUT/scutil.exit"
 cat "$OUT/scutil.exit"
-run scutil <<'SCUTIL'
+run scutil <<'EOF'
 show State:/Network/Service/FF457792-79C0-4A25-8392-D875BBEACCA6/DNS
 show State:/Network/Global/DNS
-SCUTIL
+EOF
 say "DNS with exit node (expect DNS packets on $PHYS = 0, names still resolve)"
 dns_probe exit
 
