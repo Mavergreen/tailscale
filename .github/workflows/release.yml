@@ -132,6 +132,9 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
       - name: Install patched Go (mavericks-golang cross toolchain)
         run: |
           # Pin lives in components/golang/version (a watchable path -- see ci.yml's copy of this note
@@ -179,6 +182,9 @@ jobs:
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
+
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
       # Bundle the packaging inputs into ONE tarball so executable bits (the binaries, the updater .app's
       # Mach-Os) survive the artifact round-trip -- artifacts otherwise drop file modes.
