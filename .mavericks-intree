@@ -1,0 +1,2 @@
+UPSTREAM_VERSION    # build/derive-upstream-version.sh stamps the pinned tailscale source's own version here; cmake's mavericks_resolve_version() reads it back to compute VERSION
+VERSION    # cmake's mavericks_resolve_version() (both presets) and release.yml's tag path stamp the resolved version here; this job's cmake configure and the updater bundle read it back

@@ -3,6 +3,7 @@ build-cross/
 .srccache/
 /VERSION
 /UPSTREAM_VERSION
+CMakeUserPresets.json
 
 # In-tree CMake output. release.yml configures the Sparkle updater as
 # `shipyard-cmake -S updater -B build/updater`, so a local reproduction of that step drops a

@@ -65,6 +65,17 @@ jobs:
       - name: Install mavericks-shipyard
         uses: ModernMavericks/shipyard/.github/actions/install@v1
 
+      # spec: modernmavericks-conventions SKILL.md "Build OUT of the source tree, onto fast local
+      #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
+      #       environment block, which derives it from TMPDIR; redirect TMPDIR instead.
+      - name: Build out of tree
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
       # Decides two things: what VER is, and whether this run publishes. release-notes.sh (in the
       # package job) works out new-upstream vs. repackage vs. packaging-only itself, from the tags
       # and the ingredient pins, so this step no longer needs to track a release "kind".
@@ -132,26 +143,25 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
-      - name: Record the pre-build tree
-        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
-
       - name: Install patched Go (mavericks-golang cross toolchain)
         run: |
           # Pin lives in components/golang/version (a watchable path -- see ci.yml's copy of this note
           # and repackage-on-ingredient-bump.yml). Verified against golang's published SHA256SUMS.
           ver="$(cat components/golang/version)"
           base="https://github.com/ModernMavericks/golang/releases/download/${ver}"
-          curl -fL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          sums="$RUNNER_TEMP/SHA256SUMS"
+          curl -fL --retry 3 -o "$sums" "$base/SHA256SUMS"
           # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
-          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; pkg=""; sum=""
+          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; cand=""; hash=""
           for pref in golang go126; do
-            cand="${pref}-${gover}-cross-${rev}.pkg"
-            s=$(awk -v f="$cand" '$2==f' SHA256SUMS || true)
-            if [ -n "$s" ]; then pkg="$cand"; sum="$s"; break; fi
+            c="${pref}-${gover}-cross-${rev}.pkg"
+            s=$(awk -v f="$c" '$2==f' "$sums" || true)
+            if [ -n "$s" ]; then cand="$c"; hash="${s%% *}"; break; fi
           done
-          [ -n "$pkg" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
-          curl -fL --retry 3 -o "$pkg" "$base/$pkg"
-          printf '%s\n' "$sum" | shasum -a 256 -c -
+          [ -n "$cand" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
+          pkg="$RUNNER_TEMP/$cand"
+          curl -fL --retry 3 -o "$pkg" "$base/$cand"
+          printf '%s  %s\n' "$hash" "$pkg" | shasum -a 256 -c -
           sudo installer -pkg "$pkg" -target /
           echo "/usr/local/go126-cross/bin" >> "$GITHUB_PATH"
 
@@ -163,12 +173,12 @@ jobs:
       - name: Cache the MacOSX10.9 SDK
         uses: actions/cache@v6
         with:
-          path: ${{ github.workspace }}/.sdk-cache
+          path: ${{ runner.temp }}/.sdk-cache
           key: macosx10.9-sdk-v1
 
       - name: Build + gate the three Go binaries (x86_64 / min-10.9 / no post-10.9 imports)
         env:
-          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
         run: |
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross
@@ -176,9 +186,9 @@ jobs:
 
       - name: Build the Sparkle updater (must not link tailscale)
         run: |
-          shipyard-cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          shipyard-cmake --build build/updater
-          BIN=build/updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater
+          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/tailscale-updater"
+          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
@@ -192,10 +202,10 @@ jobs:
         run: |
           export COPYFILE_DISABLE=1
           mkdir -p stage
-          cp build-cross/gobin/tailscaled       stage/tailscaled
-          cp build-cross/gobin/tailscale        stage/tailscale
-          cp build-cross/gobin/tailscale-systray stage/tailscale-systray
-          cp -R build/updater/TailscaleUpdater.app stage/TailscaleUpdater.app
+          cp "$MAVERICKS_BUILD_ROOT/tailscale-cross/gobin/tailscaled"        stage/tailscaled
+          cp "$MAVERICKS_BUILD_ROOT/tailscale-cross/gobin/tailscale"         stage/tailscale
+          cp "$MAVERICKS_BUILD_ROOT/tailscale-cross/gobin/tailscale-systray" stage/tailscale-systray
+          cp -R "$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app" stage/TailscaleUpdater.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
       - uses: actions/upload-artifact@v7
