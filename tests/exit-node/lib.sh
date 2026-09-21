@@ -64,7 +64,43 @@ lan_host() {
 }
 
 log_mark() { wc -l < "$TSD_LOG" | tr -d ' '; }
-log_since() { tail -n +"$(($1 + 1))" "$TSD_LOG" | grep -E 'router:|route (add|del)|[Hh]ealth'; }
+log_since() {
+	tail -n +"$(($1 + 1))" "$TSD_LOG" |
+		grep -E 'router:|route (add|del)|[Hh]ealth|configuring router|Rebind|defIf|add failed|del failed|File exists|UDP is blocked|open-conn-track'
+}
+
+# Whether the unscoped (no I flag) "default" route for $PHYS exists in FAMILY's table
+# (FAMILY is inet or inet6, as netstat -rn -f FAMILY names it).
+unscoped_default() {
+	netstat -rn -f "$1" | awk -v phys="$PHYS" '
+		$1 == "default" {
+			flags = $3
+			for (i = 4; i <= NF; i++) if ($i == phys) has_phys = 1
+			if (has_phys && flags !~ /I/) found = 1
+			has_phys = 0
+		}
+		END { exit !found }'
+}
+
+# Record, BEFORE any route is touched, whether the unscoped default existed per family, into
+# $OUT so the watchdog subshell (a separate process) can read it back.
+record_default_baseline() {
+	unscoped_default inet && echo yes > "$OUT/default4.baseline" || echo no > "$OUT/default4.baseline"
+	unscoped_default inet6 && echo yes > "$OUT/default6.baseline" || echo no > "$OUT/default6.baseline"
+	say "default-route baseline: inet=$(cat "$OUT/default4.baseline") inet6=$(cat "$OUT/default6.baseline")"
+}
+# For each family whose unscoped default existed at baseline but is missing now, re-add it.
+# Never adds one that wasn't there at baseline; never touches scoped (I-flagged) routes.
+restore_default_routes() {
+	if [ "$(cat "$OUT/default4.baseline" 2>/dev/null)" = yes ] && ! unscoped_default inet; then
+		say "unscoped IPv4 default via $PHYS is missing; re-adding"
+		run route -n add -inet default "$GW4"
+	fi
+	if [ "$(cat "$OUT/default6.baseline" 2>/dev/null)" = yes ] && ! unscoped_default inet6; then
+		say "unscoped IPv6 default via $PHYS is missing; re-adding"
+		run route -n add -inet6 default "$GW6"
+	fi
+}
 
 # Routes added by hand are recorded in a ledger so revert (or the watchdog) can remove exactly them.
 add_route() {
@@ -85,6 +121,8 @@ revert() {
 		rm -f "$OUT/routes-added"
 	fi
 	run ts set --exit-node= --exit-node-allow-lan-access="$BASE_ALLOW_LAN"
+	sleep 3
+	restore_default_routes
 }
 arm_watchdog() { ( sleep "$1"; say "WATCHDOG FIRED after $1s"; revert ) & WATCHDOG=$!; }
 disarm_watchdog() { kill "$WATCHDOG" 2>/dev/null; }
@@ -99,11 +137,15 @@ tsd_ports() {
 	lsof -nP -a -p "$(pgrep -x tailscaled | head -1)" -i 2>/dev/null |
 		awk 'NR > 1 { split($9, a, "->"); n = split(a[1], b, /[:.\]]/); print b[n] }' | sort -u
 }
-# A loop shows up as tailscaled's own traffic inside the tunnel. Packets with a Tailscale
-# address at either end are legitimate tunnel traffic. Anything else is either a loop (when it is
-# on one of tailscaled's ports) or a connection that predates the routes (harmless, reported).
+# A loop shows up as tailscaled's own traffic inside the tunnel. A packet with a Tailscale
+# address at BOTH ends is tailnet-to-tailnet, not a loop; drop only those. Anything else --
+# including internet-bound traffic routed into the tunnel (src 100.x, dst public) -- is kept, so
+# it is either a loop (when it is on one of tailscaled's ports) or a connection that predates the
+# routes (harmless, reported).
 leak_check() {
-	tcpdump -n -l -i "$TUN" 'not (net 100.64.0.0/10 or net fd7a:115c:a1e0::/48)' > "$OUT/leak.$1" 2>/dev/null &
+	tcpdump -n -l -i "$TUN" \
+		'not ((src net 100.64.0.0/10 and dst net 100.64.0.0/10) or (src net fd7a:115c:a1e0::/48 and dst net fd7a:115c:a1e0::/48))' \
+		> "$OUT/leak.$1" 2>/dev/null &
 	tp=$!
 	curl -4 -s -m 10 -o /dev/null http://example.com
 	curl -6 -s -m 10 -o /dev/null http://example.com
@@ -118,6 +160,8 @@ leak_check() {
 		if [ "$c" -gt 0 ]; then echo "  tailscaled port $p: $c packets"; hits=$((hits + c)); fi
 	done
 	echo "tailscaled packets looping through $TUN [$1]: $hits (must be 0)"
+	curl80=$(grep -cE '\.80[ :]' "$OUT/leak.$1")
+	echo "curl packets seen on $TUN [$1]: $curl80 (must be > 0 while routes point at the tunnel)"
 }
 
 # DNS packets leaving the physical interface while resolving uncached names.

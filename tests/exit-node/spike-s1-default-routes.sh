@@ -10,6 +10,7 @@ exec > "$OUT/s1.log" 2>&1
 TUN=$(tun_if) || { echo "ABORT: no Tailscale utun"; exit 1; }
 PHYS=$(phys_if); GW4=$(gw4); GW6=$(gw6); BASE_ALLOW_LAN=$(base_allow_lan)
 say "S1 start $(date) tun=$TUN phys=$PHYS gw4=$GW4 gw6=$GW6 allow_lan=$BASE_ALLOW_LAN"
+record_default_baseline
 arm_watchdog 300
 
 netstat -rn | grep -v W > "$OUT/routes.before"

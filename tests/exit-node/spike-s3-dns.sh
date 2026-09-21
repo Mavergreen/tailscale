@@ -9,6 +9,7 @@ exec > "$OUT/s3.log" 2>&1
 TUN=$(tun_if) || { echo "ABORT: no Tailscale utun"; exit 1; }
 PHYS=$(phys_if); GW4=$(gw4); GW6=$(gw6); BASE_ALLOW_LAN=$(base_allow_lan)
 say "S3 start $(date) tun=$TUN phys=$PHYS allow_lan=$BASE_ALLOW_LAN"
+record_default_baseline
 arm_watchdog 300
 netstat -rn | grep -v W > "$OUT/routes.before"
 
@@ -41,4 +42,5 @@ sleep 3
 netstat -rn | grep -v W > "$OUT/routes.after"
 say "routes restored (expect no diff)"
 run diff "$OUT/routes.before" "$OUT/routes.after"
+public_ips
 say "S3 DONE $(date)"

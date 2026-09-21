@@ -15,6 +15,7 @@ PHYS=$(phys_if); GW4=$(gw4); GW6=$(gw6); BASE_ALLOW_LAN=$(base_allow_lan)
 HOST=$(lan_host)
 say "acceptance start $(date) tun=$TUN phys=$PHYS gw4=$GW4 host=$HOST restarts=$RESTARTS"
 [ -n "$HOST" ] || { echo "ABORT: no LAN neighbor in the ARP table; ping one first"; exit 1; }
+record_default_baseline
 arm_watchdog 600
 netstat -rn | grep -v W > "$OUT/routes.before"
 run netstat -rn
@@ -99,4 +100,5 @@ sleep 8
 netstat -rn | grep -v W > "$OUT/routes.after"
 say "final routes (expect no diff when tailscaled is running)"
 run diff "$OUT/routes.before" "$OUT/routes.after"
+public_ips
 say "acceptance DONE $(date)"

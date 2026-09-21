@@ -14,6 +14,7 @@ LAN6=$(lan6_halves) || exit 1
 HOST=$(lan_host)
 say "S2 start $(date) tun=$TUN phys=$PHYS gw4=$GW4 gw6=$GW6 lan4=[$LAN4] lan6=[$LAN6] host=$HOST"
 [ -n "$HOST" ] || { echo "ABORT: no LAN neighbor in the ARP table; ping one first"; exit 1; }
+record_default_baseline
 arm_watchdog 300
 netstat -rn | grep -v W > "$OUT/routes.before"
 
@@ -68,5 +69,6 @@ sleep 3
 netstat -rn | grep -v W > "$OUT/routes.after"
 say "routes restored (expect no diff)"
 run diff "$OUT/routes.before" "$OUT/routes.after"
+public_ips
 run ping -c 2 -t 3 "$HOST"
 say "S2 DONE $(date)"
