@@ -70,6 +70,21 @@ log_since() {
 		grep -E 'router:|route (add|del)|[Hh]ealth|configuring router|Rebind|defIf|add failed|del failed|File exists|no route|UDP is blocked|open-conn-track'
 }
 
+# The routing table without its counters (Refs, Use, Expire) or ARP/NDP (W) entries, so two
+# snapshots differ only where routes differ.
+routes_snapshot() {
+	netstat -rn | grep -v W | awk '
+		/^Internet6:/ { v6 = 1; print; next }
+		/^Internet:/ { v6 = 0; print; next }
+		NF < 4 || $1 == "Destination" { print; next }
+		v6 { print $1, $2, $3, $4; next }
+		{ print $1, $2, $3, $6 }'
+}
+# tailscaled's bypass routes: interface-scoped (I) and tagged RTF_PROTO2 (netstat flag 2).
+bypass_routes() { netstat -rn | awk '$3 ~ /I/ && $3 ~ /2/'; }
+# How often tailscaled's own (interface-bound) sockets failed to send since log line MARK.
+bound_errors() { tail -n +"$(($1 + 1))" "$TSD_LOG" | grep -cE 'no route to host|sendto: no route|send error'; }
+
 # Whether the unscoped (no I flag) "default" route for $PHYS exists in FAMILY's table
 # (FAMILY is inet or inet6, as netstat -rn -f FAMILY names it).
 unscoped_default() {
