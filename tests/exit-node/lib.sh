@@ -66,7 +66,7 @@ lan_host() {
 log_mark() { wc -l < "$TSD_LOG" | tr -d ' '; }
 log_since() {
 	tail -n +"$(($1 + 1))" "$TSD_LOG" |
-		grep -E 'router:|route (add|del)|[Hh]ealth|configuring router|Rebind|defIf|add failed|del failed|File exists|UDP is blocked|open-conn-track'
+		grep -E 'router:|route (add|del)|[Hh]ealth|configuring router|Rebind|defIf|add failed|del failed|File exists|no route|UDP is blocked|open-conn-track'
 }
 
 # Whether the unscoped (no I flag) "default" route for $PHYS exists in FAMILY's table
@@ -102,6 +102,25 @@ restore_default_routes() {
 	fi
 }
 
+# An interface-scoped default route for $PHYS (S1b: gives en0-bound sockets a scoped route to
+# hit, the way a non-primary interface with its own DHCP lease already has). FAMILY is inet or
+# inet6; GW is that family's gateway. Recorded in its own ledger (separate from routes-added)
+# so revert never deletes a scoped default this run did not add.
+add_scoped_default() {
+	fam=$1
+	case $fam in
+	inet) gw=$GW4 ;;
+	inet6) gw=$GW6 ;;
+	esac
+	printf '$ route -n add -%s -ifscope %s default %s\n' "$fam" "$PHYS" "$gw"
+	if route -n add "-$fam" -ifscope "$PHYS" default "$gw" 2>&1; then
+		echo "$fam" >> "$OUT/scoped-added"
+		echo '[added]'
+	else
+		echo '[add failed]'
+	fi
+}
+
 # Routes added by hand are recorded in a ledger so revert (or the watchdog) can remove exactly them.
 add_route() {
 	printf '$ route -q -n add -%s %s -iface %s\n' "$1" "$2" "$TUN"
@@ -121,6 +140,12 @@ revert() {
 		rm -f "$OUT/routes-added"
 	fi
 	run ts set --exit-node= --exit-node-allow-lan-access="$BASE_ALLOW_LAN"
+	if [ -f "$OUT/scoped-added" ]; then
+		while read -r fam; do
+			run route -n delete "-$fam" -ifscope "$PHYS" default
+		done < "$OUT/scoped-added"
+		rm -f "$OUT/scoped-added"
+	fi
 	sleep 3
 	restore_default_routes
 }

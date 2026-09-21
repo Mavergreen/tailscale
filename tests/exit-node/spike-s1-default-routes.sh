@@ -2,6 +2,8 @@
 # Spike S1: split default routes by hand (spec: Phase 0).
 # Run as root, detached:  sudo NETCHANGE=0 nohup sh spike-s1-default-routes.sh OUTDIR >/dev/null 2>&1 &
 # Logs to OUTDIR/s1.log and reverts itself; the watchdog reverts after 300s regardless.
+# SCOPED_DEFAULTS=1 adds interface-scoped default routes for the physical interface (S1b) before
+# the split default routes:  sudo SCOPED_DEFAULTS=1 nohup sh spike-s1-default-routes.sh OUTDIR >/dev/null 2>&1 &
 set -u
 OUT=${1:?usage: spike-s1-default-routes.sh OUTDIR}
 mkdir -p "$OUT"
@@ -28,6 +30,12 @@ log_since "$m"
 say "exit node selected, no OS routes yet (expect baseline IPs)"
 public_ips
 
+if [ "${SCOPED_DEFAULTS:-0}" = 1 ]; then
+	say "scoped defaults on: adding interface-scoped defaults for $PHYS before the split routes"
+	add_scoped_default inet
+	add_scoped_default inet6
+fi
+
 say "add split default routes"
 add_route inet 0.0.0.0/1
 add_route inet 128.0.0.0/1
@@ -40,6 +48,8 @@ say "S1 checks: exit node's IPs, healthy status/netcheck, 0 looping tailscaled p
 public_ips
 run ts status
 run ts netcheck
+run netstat -rn -f inet | grep default
+run netstat -rn -f inet6 | grep default
 leak_check s1
 run lsof -nP -a -p "$(pgrep -x tailscaled | head -1)" -i
 

@@ -2,6 +2,8 @@
 # Spike S2: enforce LAN blocking by hand, then add link-local halves (spec: Phase 0).
 # Run as root, detached:  sudo nohup sh spike-s2-lan-blocking.sh OUTDIR >/dev/null 2>&1 &
 # Blocks the LAN for ~2 minutes: an SSH session from the LAN to this box will drop.
+# SCOPED_DEFAULTS=1 adds interface-scoped default routes for the physical interface (S1b) before
+# step 1's routes.
 set -u
 OUT=${1:?usage: spike-s2-lan-blocking.sh OUTDIR}
 mkdir -p "$OUT"
@@ -29,6 +31,12 @@ run ts set --exit-node="$EXIT_NODE" --exit-node-allow-lan-access=false
 sleep 8
 say "tailscaled's own route attempts (expect File exists for the defaults and LAN prefixes)"
 log_since "$m"
+
+if [ "${SCOPED_DEFAULTS:-0}" = 1 ]; then
+	say "scoped defaults on: adding interface-scoped defaults for $PHYS before step 1's routes"
+	add_scoped_default inet
+	add_scoped_default inet6
+fi
 
 say "step 1: split default routes + split LAN prefixes"
 add_route inet 0.0.0.0/1

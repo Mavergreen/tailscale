@@ -1,6 +1,8 @@
 #!/bin/sh
 # Spike S3: does tailscaled's scutil global resolver actually win on this OS? (spec: Phase 0)
 # Run as root, detached:  sudo nohup sh spike-s3-dns.sh OUTDIR >/dev/null 2>&1 &
+# SCOPED_DEFAULTS=1 adds interface-scoped default routes for the physical interface (S1b) before
+# its split routes.
 set -u
 OUT=${1:?usage: spike-s3-dns.sh OUTDIR}
 mkdir -p "$OUT"
@@ -20,6 +22,11 @@ dns_probe control
 say "select exit node (LAN allowed) + split default routes"
 run ts set --exit-node="$EXIT_NODE" --exit-node-allow-lan-access=true
 sleep 8
+if [ "${SCOPED_DEFAULTS:-0}" = 1 ]; then
+	say "scoped defaults on: adding interface-scoped defaults for $PHYS before the split routes"
+	add_scoped_default inet
+	add_scoped_default inet6
+fi
 add_route inet 0.0.0.0/1
 add_route inet 128.0.0.0/1
 add_route inet6 ::/1
