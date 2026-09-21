@@ -73,6 +73,9 @@ jobs:
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
           echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
 
+      - name: Derive the cross build directory
+        run: echo "CROSS_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-cross" >> "$GITHUB_ENV"
+
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
 
@@ -202,9 +205,10 @@ jobs:
         run: |
           export COPYFILE_DISABLE=1
           mkdir -p stage
-          cp "$MAVERICKS_BUILD_ROOT/tailscale-cross/gobin/tailscaled"        stage/tailscaled
-          cp "$MAVERICKS_BUILD_ROOT/tailscale-cross/gobin/tailscale"         stage/tailscale
-          cp "$MAVERICKS_BUILD_ROOT/tailscale-cross/gobin/tailscale-systray" stage/tailscale-systray
+          ls -l "$CROSS_BUILD_DIR/gobin"
+          cp "$CROSS_BUILD_DIR/gobin/tailscaled"        stage/tailscaled
+          cp "$CROSS_BUILD_DIR/gobin/tailscale"         stage/tailscale
+          cp "$CROSS_BUILD_DIR/gobin/tailscale-systray" stage/tailscale-systray
           cp -R "$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app" stage/TailscaleUpdater.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
