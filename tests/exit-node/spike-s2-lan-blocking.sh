@@ -4,6 +4,10 @@
 # Blocks the LAN for ~2 minutes: an SSH session from the LAN to this box will drop.
 # SCOPED_DEFAULTS=1 adds interface-scoped default routes for the physical interface (S1b) before
 # step 1's routes.
+# SCOPED_LAN=1 adds an interface-scoped connected route for the physical interface's LAN (S2b),
+# right after the scoped defaults and before step 1's routes (fixes en0-bound sockets when the
+# en0-scoped default's gateway lies inside the blocked LAN):
+#   sudo SCOPED_DEFAULTS=1 SCOPED_LAN=1 nohup sh spike-s2-lan-blocking.sh OUTDIR >/dev/null 2>&1 &
 set -u
 OUT=${1:?usage: spike-s2-lan-blocking.sh OUTDIR}
 mkdir -p "$OUT"
@@ -36,6 +40,12 @@ if [ "${SCOPED_DEFAULTS:-0}" = 1 ]; then
 	say "scoped defaults on: adding interface-scoped defaults for $PHYS before step 1's routes"
 	add_scoped_default inet
 	add_scoped_default inet6
+fi
+
+if [ "${SCOPED_LAN:-0}" = 1 ]; then
+	say "scoped LAN on: adding interface-scoped LAN route for $PHYS before step 1's routes"
+	add_scoped_lan inet
+	add_scoped_lan inet6
 fi
 
 say "step 1: split default routes + split LAN prefixes"
