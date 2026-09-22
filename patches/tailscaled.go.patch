@@ -1,4 +1,4 @@
-Report ModernMavericks as the packaging type via Hostinfo.Package.
+Report Mavergreen as the packaging type via Hostinfo.Package.
 
 --- cmd/tailscaled/tailscaled.go.orig
 +++ cmd/tailscaled/tailscaled.go
@@ -6,7 +6,7 @@ Report ModernMavericks as the packaging type via Hostinfo.Package.
  		hostinfo.SetApp(app)
  	}
  
-+	hostinfo.SetPackage("ModernMavericks")
++	hostinfo.SetPackage("Mavergreen")
 +
  	return startIPNServer(context.Background(), logf, publicLogID, sys)
  }

@@ -29,7 +29,7 @@ jobs:
       # Installs the shipyard pkg: shipyard-cmake/-ctest/-cpack land on PATH and SHIPYARD_SCRIPTS is
       # exported. find_package(MavericksShipyard) resolves inside shipyard-cmake's own prefix.
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
 
       # spec: modernmavericks-conventions SKILL.md "Build OUT of the source tree, onto fast local
       #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
@@ -60,7 +60,7 @@ jobs:
           # repackage-on-ingredient-bump.yml sees that path change and dispatches a repackage.
           # Verified against golang's published SHA256SUMS.
           ver="$(cat components/golang/version)"
-          base="https://github.com/ModernMavericks/golang/releases/download/${ver}"
+          base="https://github.com/Mavergreen/golang/releases/download/${ver}"
           sums="$RUNNER_TEMP/SHA256SUMS"
           curl -fL --retry 3 -o "$sums" "$base/SHA256SUMS"
           # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.

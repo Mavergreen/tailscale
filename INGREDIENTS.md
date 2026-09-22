@@ -8,8 +8,8 @@ upstream, via `.github/workflows/repackage-on-ingredient-bump.yml`.
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
 | Tailscale source (own upstream) | `components/tailscale/version` (`REPO=` + `REF=`) | ✅ `github-tags`, **stable-only** (see below) | `release-on-bump.yml` asks `release.yml` to cut `<upstream>-mavericks.1`, forward-only |
-| ModernMavericks Go cross toolchain | `components/golang/version` | ✅ `github-releases` on `ModernMavericks/golang` | watched path → repackage dispatched → `-mavericks.(N+1)` rebuilt on the new Go |
-| MacOSX10.9 SDK, Sparkle framework | `ModernMavericks/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
+| Mavergreen Go cross toolchain | `components/golang/version` | ✅ `github-releases` on `Mavergreen/golang` | watched path → repackage dispatched → `-mavericks.(N+1)` rebuilt on the new Go |
+| MacOSX10.9 SDK, Sparkle framework | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
 
 Not ingredients: `cmake/`, `dist/` (the LaunchDaemon/Agent plists and pre/postinstall scripts), and the
 updater are this repo's own recipe. A change there is a repackage you cut deliberately.

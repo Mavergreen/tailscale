@@ -2,7 +2,7 @@ Menu-bar icon only (no "tailscale" text) on macOS; quit cleanly on SIGTERM (so a
 launchd stop/logout/unload does not leave the menu-bar process running); make the
 systray "Connect" action start interactive login on a logged-out node so the login
 URL opens in the system browser (as "tailscale up" would); and add a macOS "Check
-for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
+for updates" item that hands off to the bundled Mavergreen Sparkle updater.
 
 --- client/systray/systray.go.orig
 +++ client/systray/systray.go
@@ -68,7 +68,7 @@ for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
  	})
  	menu.rebuildMenu.Enable()
  
-+	// On macOS (the ModernMavericks packaging) offer a manual update check that
++	// On macOS (the Mavergreen packaging) offer a manual update check that
 +	// hands off to the bundled Sparkle updater. Launching its executable with
 +	// --user runs Sparkle's interactive check (update dialog, or "you're up to
 +	// date"); the same executable is what the daily LaunchAgent runs with

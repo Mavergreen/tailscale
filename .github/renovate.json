@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>ModernMavericks/shipyard"],
+  "extends": ["github>Mavergreen/shipyard"],
   "packageRules": [
     {
       "description": "Track only STABLE upstream Tailscale (even minor version, per tailscale's release convention); never an unstable v1.99.x.",
@@ -24,7 +24,7 @@
       "managerFilePatterns": ["/^components/golang/version$/"],
       "matchStrings": ["^(?<currentValue>.+?)\\s*$"],
       "depNameTemplate": "mavericks-golang",
-      "packageNameTemplate": "ModernMavericks/golang",
+      "packageNameTemplate": "Mavergreen/golang",
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v?(?<version>.+)$",
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
