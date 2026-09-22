@@ -16,7 +16,7 @@ mavericks_resolve_version(MAVERICKS_TAILSCALE_VERSION ROOT "${CMAKE_SOURCE_DIR}/
 mavericks_add_updater_app(
   NAME TailscaleUpdater
   PRODUCT_NAME "Mavericks Tailscale"
-  BUNDLE_ID dev.modernmavericks.TailscaleUpdater
+  BUNDLE_ID dev.mavergreen.TailscaleUpdater
   FEED_URL "https://github.com/Mavergreen/tailscale/releases/latest/download/appcast.xml"
   ED_PUBKEY_FILE "${CMAKE_SOURCE_DIR}/ed25519_key.pub"
   ICON "${CMAKE_SOURCE_DIR}/../Tailscale.icns"   # shared product icon (also used by the menu-bar Mavericks Tailscale.app)

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.tailscale.systray</string>
+  <string>dev.mavergreen.tailscale-systray</string>
   <!-- Per-user menu-bar GUI at login. The systray binary is LSUIElement (menu-bar only, no Dock). It
        talks to the daemon over /var/run/tailscaled.socket (its own default), so no flags are needed. -->
   <key>ProgramArguments</key>

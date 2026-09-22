@@ -31,7 +31,7 @@ jobs:
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
 
-      # spec: modernmavericks-conventions SKILL.md "Build OUT of the source tree, onto fast local
+      # spec: mavergreen-conventions SKILL.md "Build OUT of the source tree, onto fast local
       #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
       #       environment block, which derives it from TMPDIR; redirect TMPDIR instead.
       - name: Build out of tree

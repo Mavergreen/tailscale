@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.tailscale.tailscaled</string>
+  <string>dev.mavergreen.tailscaled</string>
   <!-- tailscaled has no native daemonize; the LaunchDaemon runs it foreground as root, RunAtLoad +
        KeepAlive. Explicit --state/--socket = Tailscale's native darwin defaults (Task 0: no path patch),
        so the menu-bar GUI's default -socket agrees with zero flags. A root tailscaled creates a real

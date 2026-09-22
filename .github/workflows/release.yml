@@ -65,7 +65,7 @@ jobs:
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
 
-      # spec: modernmavericks-conventions SKILL.md "Build OUT of the source tree, onto fast local
+      # spec: mavergreen-conventions SKILL.md "Build OUT of the source tree, onto fast local
       #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
       #       environment block, which derives it from TMPDIR; redirect TMPDIR instead.
       - name: Build out of tree
@@ -269,8 +269,8 @@ jobs:
           sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
             --tailscaled in/tailscaled --tailscale in/tailscale \
             --systray-app "in/Mavericks Tailscale.app" --updater-app in/TailscaleUpdater.app \
-            --daemon-plist "$GITHUB_WORKSPACE/dist/com.tailscale.tailscaled.plist" \
-            --systray-agent "$GITHUB_WORKSPACE/dist/com.tailscale.systray.plist" \
+            --daemon-plist "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscaled.plist" \
+            --systray-agent "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscale-systray.plist" \
             --dist "$GITHUB_WORKSPACE/dist"
 
           # Verify the 10.9.5 floor on the CI-built .pkg before signing/publishing.

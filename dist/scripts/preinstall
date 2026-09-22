@@ -1,11 +1,39 @@
 #!/bin/sh
 # Stop any prior install so the reinstall/update is clean (unload alone leaves the plist to relaunch a
 # now-replaced binary). Best-effort throughout.
-launchctl unload /Library/LaunchDaemons/com.tailscale.tailscaled.plist 2>/dev/null || true
+launchctl unload /Library/LaunchDaemons/dev.mavergreen.tailscaled.plist 2>/dev/null || true
 CONSOLE_UID=$(stat -f %u /dev/console 2>/dev/null || echo 0)
 if [ "${CONSOLE_UID:-0}" -gt 0 ]; then
-  for a in com.tailscale.systray com.tailscale.updatecheck; do
+  for a in dev.mavergreen.tailscale-systray dev.mavergreen.tailscale-updatecheck; do
     launchctl asuser "$CONSOLE_UID" launchctl unload "/Library/LaunchAgents/$a.plist" 2>/dev/null || true
   done
+fi
+
+# ONE-TIME MIGRATION off the ModernMavericks identity (flag day 2026-09-22).
+# DELETABLE once no pre-flag-day install survives (see shipyard SKILL.md "Consolidation backlog").
+#
+# Up to 1.102.4-mavericks.7 this product ran its jobs under UPSTREAM's labels (com.tailscale.*). The
+# daemon's is the one upstream's own `tailscaled install-system-daemon` writes, so stop the old jobs
+# here exactly as the unloads above stop the new ones -- but only jobs that are OURS: the daemon is
+# ours when it runs /usr/local/sbin/tailscaled (upstream's install-system-daemon runs
+# /usr/local/bin/tailscaled), the agents when they run our menu-bar app or our old updater. The
+# postinstall removes their plists once the new payload is down; until then a failed install still
+# leaves the old jobs to come back at the next boot. Unload only when installing to the boot volume:
+# launchctl talks to the running system, not to whatever disk the pkg was pointed at.
+if [ "${3:-}" = / ]; then
+  OLD_DAEMON=/Library/LaunchDaemons/com.tailscale.tailscaled.plist
+  if [ -f "$OLD_DAEMON" ] && grep -q '<string>/usr/local/sbin/tailscaled</string>' "$OLD_DAEMON" 2>/dev/null; then
+    launchctl unload "$OLD_DAEMON" 2>/dev/null || true
+  fi
+  if [ "${CONSOLE_UID:-0}" -gt 0 ]; then
+    OLD_SYSTRAY=/Library/LaunchAgents/com.tailscale.systray.plist
+    if [ -f "$OLD_SYSTRAY" ] && grep -q '/Contents/MacOS/tailscale-systray</string>' "$OLD_SYSTRAY" 2>/dev/null; then
+      launchctl asuser "$CONSOLE_UID" launchctl unload "$OLD_SYSTRAY" 2>/dev/null || true
+    fi
+    OLD_UPDATECHECK=/Library/LaunchAgents/com.tailscale.updatecheck.plist
+    if [ -f "$OLD_UPDATECHECK" ] && grep -q '/ModernMavericks/TailscaleUpdater.app/' "$OLD_UPDATECHECK" 2>/dev/null; then
+      launchctl asuser "$CONSOLE_UID" launchctl unload "$OLD_UPDATECHECK" 2>/dev/null || true
+    fi
+  fi
 fi
 exit 0

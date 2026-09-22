@@ -23,7 +23,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>Mavericks Tailscale</string>
   <key>CFBundleDisplayName</key><string>Mavericks Tailscale</string>
-  <key>CFBundleIdentifier</key><string>dev.modernmavericks.tailscale-systray</string>
+  <key>CFBundleIdentifier</key><string>dev.mavergreen.tailscale-systray</string>
   <key>CFBundleExecutable</key><string>tailscale-systray</string>
 ${ICON_PLIST}  <key>CFBundleVersion</key><string>${VER}</string>
   <key>CFBundleShortVersionString</key><string>${VER}</string>

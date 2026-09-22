@@ -31,9 +31,9 @@ for h in stage_updater.sh set_install_floor.sh build_component_pkg.sh assert_pkg
          postinstall-stop-gui.sh assert_gui_relaunch_safe.sh; do
   [ -f "$SHIPYARD/$h" ] || { echo "package_pkg: shared helper missing: $SHIPYARD/$h" >&2; exit 1; }; done
 
-IDENT="dev.modernmavericks.tailscale"
-AGENT_LABEL="com.tailscale.updatecheck"
-UPD_APPDIR="/Library/Application Support/ModernMavericks"
+IDENT="dev.mavergreen.tailscale"
+AGENT_LABEL="dev.mavergreen.tailscale-updatecheck"
+UPD_APPDIR="/Library/Application Support/Mavergreen"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tailscale-pkg.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -45,8 +45,8 @@ mkdir -p "$stage/usr/local/sbin" "$stage/usr/local/bin" "$stage/Applications" \
 install -m 0755 "$TSD" "$stage/usr/local/sbin/tailscaled"
 install -m 0755 "$TS"  "$stage/usr/local/bin/tailscale"
 cp -R "$SYSTRAY" "$stage/Applications/Mavericks Tailscale.app"
-install -m 0644 "$DAEMON" "$stage/Library/LaunchDaemons/com.tailscale.tailscaled.plist"
-install -m 0644 "$AGENT"  "$stage/Library/LaunchAgents/com.tailscale.systray.plist"
+install -m 0644 "$DAEMON" "$stage/Library/LaunchDaemons/dev.mavergreen.tailscaled.plist"
+install -m 0644 "$AGENT"  "$stage/Library/LaunchAgents/dev.mavergreen.tailscale-systray.plist"
 
 # --- our install scripts; stage_updater renders agent-load.sh beside them (our postinstall sources it) ---
 mkdir -p "$scripts"
