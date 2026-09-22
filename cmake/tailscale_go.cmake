@@ -46,6 +46,7 @@ add_custom_command(
           "${CMAKE_SOURCE_DIR}/patches/systray.go.patch"
           "${CMAKE_SOURCE_DIR}/patches/tailscaled.go.patch"
           "${CMAKE_SOURCE_DIR}/patches/hostinfo_darwin.go.patch"
+          "${CMAKE_SOURCE_DIR}/patches/darwin-exit-nodes.patch"
           "${CMAKE_SOURCE_DIR}/overlays/certstore_darwin.go.patch"
           "${CMAKE_SOURCE_DIR}/overlays/systray_darwin.m"
           "${CMAKE_SOURCE_DIR}/components/tailscale/version"

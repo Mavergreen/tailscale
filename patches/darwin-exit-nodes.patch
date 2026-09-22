@@ -1,0 +1,753 @@
+Exit nodes for tailscaled on darwin: split routes, a delete guard, and scoped bypass routes.
+
+--- wgengine/router/osrouter/router_userspace_bsd.go.orig
++++ wgengine/router/osrouter/router_userspace_bsd.go
+@@ -8,6 +8,7 @@
+ import (
+ 	"fmt"
+ 	"log"
++	"net"
+ 	"net/netip"
+ 	"os/exec"
+ 	"runtime"
+@@ -35,6 +36,7 @@ type userspaceBSDRouter struct {
+ 	tunname string
+ 	local   []netip.Prefix
+ 	routes  map[netip.Prefix]bool
++	bypass  *bypassManager // non-nil on darwin
+ }
+ 
+ func newUserspaceBSDRouter(logf logger.Logf, tundev tun.Device, netMon *netmon.Monitor, health *health.Tracker) (router.Router, error) {
+@@ -43,12 +45,16 @@ func newUserspaceBSDRouter(logf logger.Logf, tundev tun.Device, netMon *netmon.M
+ 		return nil, err
+ 	}
+ 
+-	return &userspaceBSDRouter{
++	r := &userspaceBSDRouter{
+ 		logf:    logf,
+ 		netMon:  netMon,
+ 		health:  health,
+ 		tunname: tunname,
+-	}, nil
++	}
++	if runtime.GOOS == "darwin" {
++		r.bypass = newBypassManager(logf, netMon)
++	}
++	return r, nil
+ }
+ 
+ func (r *userspaceBSDRouter) addrsToRemove(newLocalAddrs []netip.Prefix) (remove []netip.Prefix) {
+@@ -106,6 +112,54 @@ func inet(p netip.Prefix) string {
+ 	return "inet"
+ }
+ 
++// osRoutePrefixes returns the prefixes to program into the OS routing table
++// so that traffic for route goes to the tunnel.
++func osRoutePrefixes(route netip.Prefix) []netip.Prefix {
++	if runtime.GOOS == "darwin" {
++		return darwinRoutePrefixes(route)
++	}
++	return []netip.Prefix{route}
++}
++
++// darwinRoutePrefixes returns the two halves of p (or p itself, if it is a
++// single address).
++//
++// The darwin kernel refuses a route whose destination and netmask match an
++// existing unscoped route, such as the default route or a LAN's connected
++// route, so installing 0.0.0.0/0 for an exit node (or a LAN prefix, to block
++// it) fails with "File exists". Each half is more specific, so the halves take
++// precedence without replacing the original route.
++func darwinRoutePrefixes(p netip.Prefix) []netip.Prefix {
++	p = p.Masked()
++	if p.IsSingleIP() {
++		return []netip.Prefix{p}
++	}
++	bits := p.Bits()
++	hi := p.Addr().AsSlice()
++	hi[bits/8] |= 0x80 >> (bits % 8)
++	hiAddr, _ := netip.AddrFromSlice(hi)
++	return []netip.Prefix{
++		netip.PrefixFrom(p.Addr(), bits+1),
++		netip.PrefixFrom(hiAddr, bits+1),
++	}
++}
++
++// routedViaTun returns the prefixes the routing table currently sends through
++// the tunnel, or nil if it can't tell.
++func (r *userspaceBSDRouter) routedViaTun() map[netip.Prefix]bool {
++	ifi, err := net.InterfaceByName(r.tunname)
++	if err != nil {
++		r.logf("routedViaTun: %v", err)
++		return nil
++	}
++	msgs, err := fetchRIB()
++	if err != nil {
++		r.logf("routedViaTun: reading routing table: %v", err)
++		return nil
++	}
++	return tunRoutes(msgs, ifi.Index)
++}
++
+ func (r *userspaceBSDRouter) Set(cfg *router.Config) (reterr error) {
+ 	if cfg == nil {
+ 		cfg = &shutdownConfig
+@@ -160,42 +214,73 @@ func (r *userspaceBSDRouter) Set(cfg *router.Config) (reterr error) {
+ 		}
+ 		newRoutes[route] = true
+ 	}
++	// On darwin, while an exit node's default routes are installed, keep
++	// tailscaled's own (interface-bound) sockets off the tunnel. Bypass
++	// routes go in before the exit node routes and come out after them.
++	exitNode := false
++	for route := range newRoutes {
++		if route.Bits() == 0 {
++			exitNode = true
++		}
++	}
++	if r.bypass != nil && exitNode {
++		r.bypass.set(true)
++	}
++
++	// On darwin, a delete matches any route with the same destination, so
++	// only delete what the tunnel actually has: deleting a route whose add
++	// failed would delete the user's own route instead.
++	var viaTun map[netip.Prefix]bool
++	if runtime.GOOS == "darwin" {
++		viaTun = r.routedViaTun()
++	}
+ 	// Delete any preexisting routes.
+ 	for route := range r.routes {
+ 		if resetRoutes || !newRoutes[route] {
+-			net := netipx.PrefixIPNet(route)
+-			nip := net.IP.Mask(net.Mask)
+-			nstr := fmt.Sprintf("%v/%d", nip, route.Bits())
+-			del := "del"
+-			if version.OS() == "macOS" {
+-				del = "delete"
+-			}
+-			routedel := []string{"route", "-q", "-n",
+-				del, "-" + inet(route), nstr,
+-				"-iface", r.tunname}
+-			out, err := cmd(routedel...).CombinedOutput()
+-			if err != nil {
+-				r.logf("route del failed: %v: %v\n%s", routedel, err, out)
+-				setErr(err)
++			for _, p := range osRoutePrefixes(route) {
++				if viaTun != nil && !viaTun[p] {
++					r.logf("route del skipped: %v is not routed via %s", p, r.tunname)
++					continue
++				}
++				ipnet := netipx.PrefixIPNet(p)
++				nip := ipnet.IP.Mask(ipnet.Mask)
++				nstr := fmt.Sprintf("%v/%d", nip, p.Bits())
++				del := "del"
++				if version.OS() == "macOS" {
++					del = "delete"
++				}
++				routedel := []string{"route", "-q", "-n",
++					del, "-" + inet(p), nstr,
++					"-iface", r.tunname}
++				out, err := cmd(routedel...).CombinedOutput()
++				if err != nil {
++					r.logf("route del failed: %v: %v\n%s", routedel, err, out)
++					setErr(err)
++				}
+ 			}
+ 		}
+ 	}
+ 	// Add the routes.
+ 	for route := range newRoutes {
+ 		if resetRoutes || !r.routes[route] {
+-			net := netipx.PrefixIPNet(route)
+-			nip := net.IP.Mask(net.Mask)
+-			nstr := fmt.Sprintf("%v/%d", nip, route.Bits())
+-			routeadd := []string{"route", "-q", "-n",
+-				"add", "-" + inet(route), nstr,
+-				"-iface", r.tunname}
+-			out, err := cmd(routeadd...).CombinedOutput()
+-			if err != nil {
+-				r.logf("addr add failed: %v: %v\n%s", routeadd, err, out)
+-				setErr(err)
++			for _, p := range osRoutePrefixes(route) {
++				ipnet := netipx.PrefixIPNet(p)
++				nip := ipnet.IP.Mask(ipnet.Mask)
++				nstr := fmt.Sprintf("%v/%d", nip, p.Bits())
++				routeadd := []string{"route", "-q", "-n",
++					"add", "-" + inet(p), nstr,
++					"-iface", r.tunname}
++				out, err := cmd(routeadd...).CombinedOutput()
++				if err != nil {
++					r.logf("addr add failed: %v: %v\n%s", routeadd, err, out)
++					setErr(err)
++				}
+ 			}
+ 		}
+ 	}
++	if r.bypass != nil && !exitNode {
++		r.bypass.set(false)
++	}
+ 
+ 	// Store the interface and routes so we know what to change on an update.
+ 	if reterr == nil {
+@@ -207,5 +292,8 @@ func (r *userspaceBSDRouter) Set(cfg *router.Config) (reterr error) {
+ }
+ 
+ func (r *userspaceBSDRouter) Close() error {
++	if r.bypass != nil {
++		r.bypass.close()
++	}
+ 	return nil
+ }
+--- /dev/null
++++ wgengine/router/osrouter/router_userspace_bsd_bypass.go
+@@ -0,0 +1,549 @@
++// Copyright (c) Tailscale Inc & contributors
++// SPDX-License-Identifier: BSD-3-Clause
++
++//go:build darwin || freebsd
++
++package osrouter
++
++import (
++	"net"
++	"net/netip"
++	"runtime"
++	"slices"
++	"strings"
++	"sync"
++	"syscall"
++	"time"
++
++	"golang.org/x/net/route"
++	"golang.org/x/sys/unix"
++	"tailscale.com/net/netmon"
++	"tailscale.com/types/logger"
++)
++
++// RTF_IFSCOPE and RTF_WASCLONED aren't defined by golang.org/x/sys/unix on
++// every BSD this file builds for: FreeBSD has neither interface-scoped
++// routing nor (in modern versions) route cloning. Defined locally, as
++// net/netmon does for RTF_IFSCOPE and for the same reason. They're inert
++// on FreeBSD: real FreeBSD routes never set these bits.
++// unix.RTF_PROTO2 exists on both darwin and freebsd, so it needs no local
++// copy.
++const (
++	rtfIfscope   = 0x1000000 // RTF_IFSCOPE (darwin)
++	rtfWasCloned = 0x20000   // RTF_WASCLONED (darwin)
++)
++
++// A bypassRoute is a route scoped to the physical interface that
++// tailscaled's own sockets use.
++//
++// Those sockets are bound to that interface (see net/netns), so the kernel
++// looks up their destinations in the interface's scope. When the interface
++// is the primary one it has no scoped routes of its own, the lookup falls
++// through to the exit node's routes on the tunnel, and the kernel refuses to
++// send ("no route to host"). Bypass routes give the bound lookup something to
++// find. Unbound traffic never consults them.
++type bypassRoute struct {
++	ifName string
++	dst    netip.Prefix // 0.0.0.0/0 or ::/0 for a default route
++	gw     netip.Addr   // zero for an on-link route
++}
++
++// bypassRoutesFor returns the bypass routes for interface ifName: a default
++// route for each family that has a gateway, and an on-link route for each
++// of the interface's own prefixes except link-local and host-only ones.
++func bypassRoutesFor(ifName string, gw4, gw6 netip.Addr, addrs []netip.Prefix) []bypassRoute {
++	var rs []bypassRoute
++	if gw4.IsValid() {
++		rs = append(rs, bypassRoute{ifName: ifName, dst: netip.PrefixFrom(netip.IPv4Unspecified(), 0), gw: gw4})
++	}
++	if gw6.IsValid() {
++		rs = append(rs, bypassRoute{ifName: ifName, dst: netip.PrefixFrom(netip.IPv6Unspecified(), 0), gw: gw6})
++	}
++	var seen []netip.Prefix
++	for _, a := range addrs {
++		p := a.Masked()
++		if p.IsSingleIP() || a.Addr().IsLinkLocalUnicast() || a.Addr().IsLoopback() || slices.Contains(seen, p) {
++			continue
++		}
++		seen = append(seen, p)
++		rs = append(rs, bypassRoute{ifName: ifName, dst: p})
++	}
++	return rs
++}
++
++// args returns the route(8) arguments that add or delete r. Added routes
++// are tagged RTF_PROTO2 so that a later tailscaled can find and remove any
++// left behind by a crash.
++func (r bypassRoute) args(verb string) []string {
++	args := []string{"route", "-q", "-n", verb, "-" + inet(r.dst), "-ifscope", r.ifName}
++	if r.dst.Bits() == 0 {
++		args = append(args, "default")
++	} else {
++		args = append(args, "-net", r.dst.String())
++	}
++	if verb == "add" {
++		if r.gw.IsValid() {
++			args = append(args, r.gw.String())
++		} else {
++			args = append(args, "-interface", r.ifName)
++		}
++		args = append(args, "-proto2")
++	}
++	return args
++}
++
++func fetchRIB() ([]route.Message, error) {
++	rib, err := route.FetchRIB(syscall.AF_UNSPEC, unix.NET_RT_DUMP, 0)
++	if err != nil {
++		return nil, err
++	}
++	return route.ParseRIB(route.RIBTypeRoute, rib)
++}
++
++// ribPrefix returns the destination prefix of a routing table entry.
++func ribPrefix(rm *route.RouteMessage) (netip.Prefix, bool) {
++	if len(rm.Addrs) <= unix.RTAX_DST {
++		return netip.Prefix{}, false
++	}
++	var ip netip.Addr
++	switch a := rm.Addrs[unix.RTAX_DST].(type) {
++	case *route.Inet4Addr:
++		ip = netip.AddrFrom4(a.IP)
++	case *route.Inet6Addr:
++		ip = netip.AddrFrom16(a.IP)
++	default:
++		return netip.Prefix{}, false
++	}
++	if rm.Flags&unix.RTF_HOST != 0 {
++		return netip.PrefixFrom(ip, ip.BitLen()), true
++	}
++	if len(rm.Addrs) <= unix.RTAX_NETMASK {
++		return netip.Prefix{}, false
++	}
++	var mask net.IPMask
++	switch m := rm.Addrs[unix.RTAX_NETMASK].(type) {
++	case *route.Inet4Addr:
++		if !ip.Is4() {
++			return netip.Prefix{}, false
++		}
++		mask = net.IPMask(m.IP[:])
++	case *route.Inet6Addr:
++		if !ip.Is6() {
++			return netip.Prefix{}, false
++		}
++		mask = net.IPMask(m.IP[:])
++	default:
++		return netip.Prefix{}, false
++	}
++	ones, bits := mask.Size()
++	if bits == 0 {
++		// Size returns (0, 0) for a mask that isn't in canonical form
++		// (contiguous 1 bits followed by 0 bits). Don't mistake that
++		// for a genuine /0, which comes back as (0, 32) or (0, 128).
++		return netip.Prefix{}, false
++	}
++	return netip.PrefixFrom(ip, ones).Masked(), true
++}
++
++// defaultGateways returns the gateways of the unscoped default routes
++// through interface index ifIndex. It reads the routing table rather than
++// asking route(8): a lookup would be answered by the exit node's routes.
++func defaultGateways(msgs []route.Message, ifIndex int, ifName string) (gw4, gw6 netip.Addr) {
++	for _, m := range msgs {
++		rm, ok := m.(*route.RouteMessage)
++		if !ok || rm.Index != ifIndex || rm.Flags&unix.RTF_GATEWAY == 0 || rm.Flags&rtfIfscope != 0 {
++			continue
++		}
++		dst, ok := ribPrefix(rm)
++		if !ok || dst.Bits() != 0 || len(rm.Addrs) <= unix.RTAX_GATEWAY {
++			continue
++		}
++		switch a := rm.Addrs[unix.RTAX_GATEWAY].(type) {
++		case *route.Inet4Addr:
++			if !gw4.IsValid() && dst.Addr().Is4() {
++				gw4 = netip.AddrFrom4(a.IP)
++			}
++		case *route.Inet6Addr:
++			if !gw6.IsValid() && dst.Addr().Is6() {
++				gw6 = netip.AddrFrom16(a.IP)
++				if gw6.IsLinkLocalUnicast() {
++					gw6 = gw6.WithZone(ifName)
++				}
++			}
++		}
++	}
++	return gw4, gw6
++}
++
++// staleBypassRoutes returns the bypass routes in the routing table, found
++// by the RTF_PROTO2 tag that args puts on them. Only a crash leaves them
++// behind. ifName maps an interface index to its name.
++//
++// The kernel clones a scoped default or on-link route per destination it
++// resolves (ARP-like host entries), and a clone inherits its parent's
++// flags, RTF_PROTO2 included. Those clones are never routes args created,
++// so match only the two shapes it does create: a default route (dst bits
++// 0, has a gateway) or an on-link route (dst bits > 0, no gateway); a
++// clone is always a host route, which is neither.
++func staleBypassRoutes(msgs []route.Message, ifName func(int) string) []bypassRoute {
++	var rs []bypassRoute
++	for _, m := range msgs {
++		rm, ok := m.(*route.RouteMessage)
++		if !ok || rm.Flags&rtfIfscope == 0 || rm.Flags&unix.RTF_PROTO2 == 0 {
++			continue
++		}
++		if rm.Flags&rtfWasCloned != 0 || rm.Flags&unix.RTF_HOST != 0 {
++			continue
++		}
++		dst, ok := ribPrefix(rm)
++		if !ok {
++			continue
++		}
++		isDefault := dst.Bits() == 0
++		hasGateway := rm.Flags&unix.RTF_GATEWAY != 0
++		if isDefault != hasGateway {
++			continue
++		}
++		name := ifName(rm.Index)
++		if name == "" {
++			continue
++		}
++		rs = append(rs, bypassRoute{ifName: name, dst: dst})
++	}
++	return rs
++}
++
++// tunRoutes returns the unscoped prefixes routed through interface index
++// tunIndex.
++func tunRoutes(msgs []route.Message, tunIndex int) map[netip.Prefix]bool {
++	ps := make(map[netip.Prefix]bool)
++	for _, m := range msgs {
++		rm, ok := m.(*route.RouteMessage)
++		if !ok || rm.Index != tunIndex || rm.Flags&rtfIfscope != 0 {
++			continue
++		}
++		if p, ok := ribPrefix(rm); ok {
++			ps[p] = true
++		}
++	}
++	return ps
++}
++
++func ifNameByIndex(index int) string {
++	ifi, err := net.InterfaceByIndex(index)
++	if err != nil {
++		return ""
++	}
++	return ifi.Name
++}
++
++// bypassManager keeps bypass routes installed while exit node routes are,
++// and moves them along when the default interface or its gateway changes.
++// wgengine doesn't call Set when only the network changed, so the manager
++// watches netMon itself.
++type bypassManager struct {
++	logf logger.Logf
++
++	// run executes a route(8) command and returns its combined output.
++	// Overridden in tests; the default runs cmd(args...).CombinedOutput().
++	run func(args ...string) ([]byte, error)
++	// routes returns the current routing table. Overridden in tests; the
++	// default is fetchRIB.
++	routes func() ([]route.Message, error)
++	// state returns the current netmon state (the default interface, its
++	// addresses, and its index, all inside *netmon.State), or nil if
++	// there isn't one available. Overridden in tests so wantLocked can
++	// be exercised without a real netmon.Monitor.
++	state func() *netmon.State
++	// after schedules f to run after d and returns immediately (it
++	// doesn't block until f runs). Overridden in tests so the
++	// retry-scheduling path can be exercised without a real 5s sleep;
++	// the default runs f via time.AfterFunc.
++	after func(d time.Duration, f func())
++
++	mu           sync.Mutex
++	active       bool
++	closed       bool
++	retryPending bool // a delayed retry (see scheduleRetryLocked) is scheduled
++	retried      bool // the one retry allowed since the last network change has been used
++	installed    []bypassRoute
++	unregister   func()
++}
++
++func newBypassManager(logf logger.Logf, netMon *netmon.Monitor) *bypassManager {
++	if runtime.GOOS != "darwin" {
++		// FreeBSD has no IP_BOUND_IF bypass to support here, and its
++		// 0x1000000 isn't RTF_IFSCOPE.
++		return nil
++	}
++	b := &bypassManager{
++		logf: logf,
++		run: func(args ...string) ([]byte, error) {
++			return cmd(args...).CombinedOutput()
++		},
++		routes: fetchRIB,
++		state: func() *netmon.State {
++			if netMon == nil {
++				return nil
++			}
++			return netMon.InterfaceState()
++		},
++		after: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
++	}
++	b.removeStale()
++	if netMon != nil {
++		b.unregister = netMon.RegisterChangeCallback(func(*netmon.ChangeDelta) { b.onNetworkChange() })
++	}
++	return b
++}
++
++// set installs the bypass routes if active, and removes them if not.
++func (b *bypassManager) set(active bool) {
++	if b == nil {
++		return
++	}
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	b.active = active && !b.closed
++	b.syncLocked()
++}
++
++func (b *bypassManager) refresh() {
++	if b == nil {
++		return
++	}
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	if b.active {
++		b.syncLocked()
++	}
++}
++
++func (b *bypassManager) close() {
++	if b == nil {
++		return
++	}
++	if b.unregister != nil {
++		b.unregister()
++	}
++	b.mu.Lock()
++	b.closed = true
++	b.mu.Unlock()
++	b.set(false)
++}
++
++// onNetworkChange is netMon's change callback. Unlike refresh, it also
++// re-arms the one delayed retry scheduleRetryLocked allows per network
++// change: a gateway that's missing after this change is worth one more
++// look, even if the previous change's retry already fired.
++func (b *bypassManager) onNetworkChange() {
++	if b == nil {
++		return
++	}
++	b.mu.Lock()
++	b.retried = false
++	b.mu.Unlock()
++	b.refresh()
++}
++
++// scheduleRetryLocked schedules one delayed refresh, at most once per
++// network change (tracked by retried, which only onNetworkChange clears).
++// It's used when a family's default gateway is momentarily missing (e.g.
++// configd hasn't finished updating the routing table after a network
++// change): netmon's State.Equal doesn't compare gateways, so the gateway
++// appearing on its own might not otherwise produce a change callback. If
++// the gateway is still missing when the retry fires, that's treated as
++// "this network doesn't have one" rather than retried again forever; a
++// further network change is what earns another retry.
++func (b *bypassManager) scheduleRetryLocked() {
++	if b.retryPending || b.retried {
++		return
++	}
++	b.retryPending = true
++	b.retried = true
++	b.after(5*time.Second, b.retry)
++}
++
++func (b *bypassManager) retry() {
++	b.mu.Lock()
++	b.retryPending = false
++	active, closed := b.active, b.closed
++	b.mu.Unlock()
++	if closed || !active {
++		return
++	}
++	b.refresh()
++}
++
++func (b *bypassManager) syncLocked() {
++	var want []bypassRoute
++	if b.active {
++		w, ok := b.wantLocked()
++		if !ok {
++			// Couldn't determine what's wanted right now: netmon or
++			// the routing table was unavailable, or the default
++			// interface is mid-transition. Leave the installed
++			// routes alone rather than tearing down a working
++			// bypass while the exit node stays selected; the next
++			// netmon callback, or the retry scheduleRetryLocked
++			// sets up, will try again.
++			return
++		}
++		want = w
++	}
++
++	// Fetch the live routing table once, only if there's a chance we'll
++	// delete something, so a delete can confirm the route it's about to
++	// remove is still the one args added (see stillOurs).
++	var live []route.Message
++	liveOK := true
++	if len(b.installed) > 0 {
++		var err error
++		live, err = b.routes()
++		if err != nil {
++			b.logf("bypass routes: reading routing table before delete: %v", err)
++			liveOK = false
++		}
++	}
++
++	var kept []bypassRoute
++	for _, r := range b.installed {
++		if slices.Contains(want, r) {
++			kept = append(kept, r)
++			continue
++		}
++		if !liveOK {
++			// Can't confirm ownership without the live table, so
++			// don't drop the route from tracking either: forgetting
++			// it here would leave a real RTF_PROTO2 route behind
++			// with nothing left to delete it later. Keep it and try
++			// again next sync.
++			kept = append(kept, r)
++			continue
++		}
++		if !b.stillOurs(live, r) {
++			b.logf("bypass route %v on %s is no longer confirmed ours; not deleting", r.dst, r.ifName)
++			continue
++		}
++		if out, err := b.run(r.args("delete")...); err != nil {
++			b.logf("bypass route delete failed: %v: %v\n%s", r.args("delete"), err, out)
++		}
++	}
++	for _, r := range want {
++		if slices.Contains(kept, r) {
++			continue
++		}
++		if out, err := b.run(r.args("add")...); err != nil {
++			// Most likely "File exists": a route that isn't ours is
++			// already there, so don't record it for deletion.
++			b.logf("bypass route add failed: %v: %v\n%s", r.args("add"), err, out)
++			continue
++		}
++		kept = append(kept, r)
++	}
++	b.installed = kept
++}
++
++// stillOurs reports whether bypass route r is still present in the live
++// routing table msgs, scoped to its interface, and tagged RTF_PROTO2. It's
++// the guard syncLocked checks before deleting: the kernel keys a scoped
++// route by (family, ifscope index, dst), and if the default interface
++// changed away and back, that key might now belong to a route configd
++// installed for its own purposes, not the one args added.
++func (b *bypassManager) stillOurs(msgs []route.Message, r bypassRoute) bool {
++	st := b.state()
++	if st == nil {
++		return false
++	}
++	ifi, ok := st.Interface[r.ifName]
++	if !ok || ifi.Interface == nil {
++		return false
++	}
++	for _, m := range msgs {
++		rm, ok := m.(*route.RouteMessage)
++		if !ok || rm.Index != ifi.Index || rm.Flags&rtfIfscope == 0 {
++			continue
++		}
++		if dst, ok := ribPrefix(rm); ok && dst == r.dst {
++			return rm.Flags&unix.RTF_PROTO2 != 0
++		}
++	}
++	return false
++}
++
++// wantLocked returns the bypass routes the manager currently wants, and
++// whether it could determine them. ok is false when the routing
++// information needed to compute want isn't available right now (netmon,
++// the routing table, or the default interface itself), as opposed to a
++// deliberate "nothing wanted" (no active bypass needed because tailscaled
++// itself is the default route). Callers must not treat !ok as "want
++// nothing" and tear down whatever is already installed.
++func (b *bypassManager) wantLocked() (want []bypassRoute, ok bool) {
++	st := b.state()
++	if st == nil || st.DefaultRouteInterface == "" {
++		b.logf("bypass routes: no default interface")
++		return nil, false
++	}
++	ifName := st.DefaultRouteInterface
++	if strings.HasPrefix(ifName, "utun") {
++		// tailscaled itself is the default route; there's no physical
++		// interface to install bypass routes for.
++		return nil, true
++	}
++	ifi, found := st.Interface[ifName]
++	if !found || ifi.Interface == nil {
++		b.logf("bypass routes: no interface state for %s", ifName)
++		return nil, false
++	}
++	msgs, err := b.routes()
++	if err != nil {
++		b.logf("bypass routes: reading routing table: %v", err)
++		return nil, false
++	}
++	gw4, gw6 := defaultGateways(msgs, ifi.Index, ifName)
++	addrs := st.InterfaceIPs[ifName]
++
++	needRetry := false
++	if !gw4.IsValid() {
++		b.logf("bypass routes: no IPv4 gateway for %s", ifName)
++		needRetry = needRetry || hasNonLinkLocal(addrs, false)
++	}
++	if !gw6.IsValid() {
++		b.logf("bypass routes: no IPv6 gateway for %s", ifName)
++		needRetry = needRetry || hasNonLinkLocal(addrs, true)
++	}
++	if needRetry {
++		b.scheduleRetryLocked()
++	}
++
++	return bypassRoutesFor(ifName, gw4, gw6, addrs), true
++}
++
++// hasNonLinkLocal reports whether addrs has a non-link-local, non-loopback
++// address of the given family (v6 selects IPv6, else IPv4).
++func hasNonLinkLocal(addrs []netip.Prefix, v6 bool) bool {
++	for _, p := range addrs {
++		a := p.Addr()
++		if a.Is6() != v6 {
++			continue
++		}
++		if !a.IsLinkLocalUnicast() && !a.IsLoopback() {
++			return true
++		}
++	}
++	return false
++}
++
++func (b *bypassManager) removeStale() {
++	msgs, err := b.routes()
++	if err != nil {
++		b.logf("bypass routes: reading routing table: %v", err)
++		return
++	}
++	for _, r := range staleBypassRoutes(msgs, ifNameByIndex) {
++		b.logf("removing stale bypass route %v on %s", r.dst, r.ifName)
++		if out, err := b.run(r.args("delete")...); err != nil {
++			b.logf("bypass route delete failed: %v: %v\n%s", r.args("delete"), err, out)
++		}
++	}
++}
