@@ -1,0 +1,67 @@
+Mac OS X 10.6 (Snow Leopard): the kernel does not implement the
+LOCAL_PEERPID socket option (getsockopt fails with EOPNOTSUPP, errno 102 --
+darwin keeps it distinct from ENOTSUP=45), so localapi's peercred.Get fails
+on every CLI connection and tailscaled answers 401 to everything. For exactly
+EOPNOTSUPP/ENOTSUP on darwin, treat the failure as "not implemented"
+(creds == nil) instead of rejecting the connection; any other peercred error
+still propagates. IsReadonlyConn grants read-write when creds are nil on
+darwin -- the pre-peercred behavior, the socket's permissions remaining the
+only local gate. macOS versions that implement peer credentials never hit
+either path.
+
+Also blank-imports tailscale.com/legacy106 (the 10.6 libSystem/Security
+shims) from this file. The package's contents are darwin_10_6-tagged, so on
+other floors the import compiles to nothing.
+
+--- ipn/ipnauth/ipnauth.go.orig
++++ ipn/ipnauth/ipnauth.go
+@@ -176,6 +176,14 @@
+ 	}
+ 	creds := ci.creds
+ 	if creds == nil {
++		if runtime.GOOS == "darwin" {
++			// macOS 10.6/10.7 kernels cannot report unix-socket peer
++			// credentials (LOCAL_PEERCRED/LOCAL_PEERPID unimplemented).
++			// Grant read-write as in the pre-peercred era; the socket's
++			// permissions remain the only gate.
++			logf("connection from unknown peer; darwin legacy kernel, read-write")
++			return rw
++		}
+ 		logf("connection from unknown peer; read-only")
+ 		return ro
+ 	}
+--- ipn/ipnauth/ipnauth_unix_creds.go.orig
++++ ipn/ipnauth/ipnauth_unix_creds.go
+@@ -6,8 +6,15 @@
+ package ipnauth
+ 
+ import (
++	"errors"
+ 	"net"
++	"runtime"
++	"syscall"
+ 
++	// Blank-import the 10.6 symbol shims on darwin (inert on newer floors:
++	// the implementations are correct everywhere, just unreferenced).
++	_ "tailscale.com/legacy106"
++
+ 	"github.com/tailscale/peercred"
+ 	"tailscale.com/types/logger"
+ )
+@@ -24,6 +31,16 @@
+ 	} else if err == peercred.ErrNotImplemented {
+ 		// peercred.Get is not implemented on this OS (such as OpenBSD)
+ 		// Just leave creds as nil, as documented.
++	} else if runtime.GOOS == "darwin" &&
++		(errors.Is(err, syscall.EOPNOTSUPP) || errors.Is(err, syscall.ENOTSUP)) {
++		// macOS 10.6 kernels do not implement LOCAL_PEERPID: getsockopt
++		// then fails with EOPNOTSUPP (errno 102 on darwin, distinct from
++		// ENOTSUP's 45) on every connection -- probed on real 10.6.8
++		// hardware. Treat exactly that errno pair as "unimplemented" rather
++		// than rejecting the connection (IsReadonlyConn handles nil creds).
++		// Any OTHER failure on a modern Mac still propagates -- nil-creds
++		// read-write is a legacy-kernel accommodation, not a blanket trust
++		// fallback.
+ 	} else {
+ 		return nil, err
+ 	}

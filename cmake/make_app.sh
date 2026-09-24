@@ -1,11 +1,13 @@
 #!/bin/sh
-# make_app.sh <systray-binary> <out .app> <version> [icon.icns]
+# make_app.sh <systray-binary> <out .app> <version> [icon.icns] [min-macos]
+#   min-macos: LSMinimumSystemVersion stamped into Info.plist (default 10.9;
+#   the legacy106 floor passes 10.6)
 # Wrap the tailscale-systray Go binary in a menu-bar-only (LSUIElement) .app. No ObjC -- the Go binary
 # IS the app; the bundle just gives it an Info.plist so LaunchServices treats it as a menu-bar agent.
 # An optional .icns is installed as the bundle icon (CFBundleIconFile) so Finder/About show the Tailscale
 # logo instead of the generic app icon; omit it and the bundle simply has no custom icon.
 set -eu
-BIN=$1; APP=$2; VER=$3; ICON=${4:-}
+BIN=$1; APP=$2; VER=$3; ICON=${4:-}; MIN=${5:-10.9}
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 0755 "$BIN" "$APP/Contents/MacOS/tailscale-systray"
@@ -29,7 +31,7 @@ ${ICON_PLIST}  <key>CFBundleVersion</key><string>${VER}</string>
   <key>CFBundleShortVersionString</key><string>${VER}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSUIElement</key><true/>
-  <key>LSMinimumSystemVersion</key><string>10.9</string>
+  <key>LSMinimumSystemVersion</key><string>${MIN}</string>
 </dict>
 </plist>
 PLIST

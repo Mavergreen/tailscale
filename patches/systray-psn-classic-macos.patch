@@ -1,0 +1,36 @@
+Classic macOS (10.8 and earlier): LaunchServices launches apps with a Carbon-era
+-psn_<a>_<b> ProcessSerialNumber argument; flag.Parse treats it as an unknown
+flag and exits, so Finder launches died instantly (running the binary directly
+worked). Strip -psn_* arguments before parsing.
+
+--- cmd/systray/systray.go.orig
++++ cmd/systray/systray.go
+@@ -8,6 +8,8 @@
+ 
+ import (
+ 	"flag"
++	"os"
++	"strings"
+ 
+ 	"tailscale.com/client/local"
+ 	"tailscale.com/client/systray"
+@@ -18,6 +20,19 @@
+ var theme = flag.String("theme", "dark", "color theme for Tailscale icon: dark, dark:nobg, light, light:nobg")
+ 
+ func main() {
++	// Classic macOS (10.8 and earlier) LaunchServices launches apps with a
++	// Carbon-era -psn_<a>_<b> ProcessSerialNumber argument. flag.Parse
++	// treats it as an unknown flag, prints usage, and exits -- so a Finder
++	// launch flashed and died while running the binary directly worked.
++	// Strip it (and any sibling -psn_ arguments) before parsing.
++	args := os.Args[:1]
++	for _, a := range os.Args[1:] {
++		if strings.HasPrefix(a, "-psn_") {
++			continue
++		}
++		args = append(args, a)
++	}
++	os.Args = args
+ 	flag.Parse()
+ 	lc := &local.Client{Socket: *socket}
+ 	systray.SetTheme(*theme)

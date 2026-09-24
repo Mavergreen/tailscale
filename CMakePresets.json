@@ -20,14 +20,54 @@
         "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross",
         "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"
       }
+    },
+    {
+      "name": "cross-legacy",
+      "inherits": "mavericks-cross",
+      "displayName": "cross-legacy — build for Snow Leopard 10.6 on a modern host (go126-cross + legacy106 floor)",
+      "binaryDir": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-cross-legacy",
+      "cacheVariables": {
+        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross",
+        "MAVERICKS_TAILSCALE_FLOOR": "10.6",
+        "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "native", "configurePreset": "native" },
-    { "name": "cross", "configurePreset": "cross" }
+    {
+      "name": "native",
+      "configurePreset": "native"
+    },
+    {
+      "name": "cross",
+      "configurePreset": "cross"
+    },
+    {
+      "name": "cross-legacy",
+      "configurePreset": "cross-legacy"
+    }
   ],
   "testPresets": [
-    { "name": "native", "configurePreset": "native", "output": { "outputOnFailure": true } },
-    { "name": "cross", "configurePreset": "cross", "output": { "outputOnFailure": true } }
+    {
+      "name": "native",
+      "configurePreset": "native",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cross",
+      "configurePreset": "cross",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cross-legacy",
+      "configurePreset": "cross-legacy",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

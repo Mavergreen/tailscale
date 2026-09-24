@@ -114,3 +114,86 @@ jobs:
 
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+
+  build-legacy106:
+    name: Cross-build + legacy106 gate (macos-26)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      # spec: mavergreen-conventions SKILL.md "Build OUT of the source tree, onto fast local
+      #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
+      #       environment block, which derives it from TMPDIR; redirect TMPDIR instead.
+      - name: Build out of tree
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
+      - name: Install patched Go (mavericks-golang cross toolchain)
+        run: |
+          ver="$(cat components/golang/version)"
+          base="https://github.com/Mavergreen/golang/releases/download/${ver}"
+          sums="$RUNNER_TEMP/SHA256SUMS"
+          curl -fL --retry 3 -o "$sums" "$base/SHA256SUMS"
+          # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
+          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; cand=""; hash=""
+          for pref in golang go126; do
+            c="${pref}-${gover}-cross-${rev}.pkg"
+            s=$(awk -v f="$c" '$2==f' "$sums" || true)
+            if [ -n "$s" ]; then cand="$c"; hash="${s%% *}"; break; fi
+          done
+          [ -n "$cand" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
+          pkg="$RUNNER_TEMP/$cand"
+          curl -fL --retry 3 -o "$pkg" "$base/$cand"
+          printf '%s  %s\n' "$hash" "$pkg" | shasum -a 256 -c -
+          sudo installer -pkg "$pkg" -target /
+          echo "/usr/local/go126-cross/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm the patched cross toolchain is on PATH
+        run: |
+          test "$(command -v go)" = /usr/local/go126-cross/bin/go
+          go version
+
+      - name: Cache SDKs (distinct key from the 10.9 job's cache)
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/.sdk-cache
+            ${{ runner.temp }}/.sdk106-cache
+          key: macosx-sdk106-v1
+
+      - name: Derive the upstream version from the pin
+        run: sh build/derive-upstream-version.sh
+
+      - name: Build + gate the 10.6-floor binaries (x86_64 / min-10.6 / Core 2 safe)
+        env:
+          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ runner.temp }}/.sdk106-cache
+        run: |
+          shipyard-cmake --preset cross-legacy
+          shipyard-cmake --build --preset cross-legacy
+          shipyard-ctest --preset cross-legacy
+
+      - name: Build the 10.6 updater (must be min-10.6, x86_64)
+        env:
+          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ runner.temp }}/.sdk106-cache
+        run: |
+          VER="$(cat UPSTREAM_VERSION 2>/dev/null || echo 1.0)"
+          sh cmake/build_updater106.sh "$MAVERICKS_BUILD_ROOT/updater106" "$VER"
+          BIN="$MAVERICKS_BUILD_ROOT/updater106/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater106"
+          ARCHS=$(lipo -info "$BIN" | sed -n 's/.*: //p')
+          [ "$ARCHS" = "x86_64" ] || { echo "::error::updater archs: $ARCHS (expected x86_64)"; exit 1; }
+          MIN=$(otool -l "$BIN" | awk '/LC_VERSION_MIN_MACOSX/{f=1} f && /version/{print $2; exit}')
+          [ "$MIN" = "10.6" ] || { echo "::error::updater min-version is $MIN, expected 10.6"; exit 1; }
+
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
