@@ -86,9 +86,34 @@ fi
 mkdir -p "$scripts"
 # Compose preinstall: shebang + the original script (updater cleanup
 # and agent loading belong in POSTINSTALL, after the payload is laid down).
+# PREINSTALL additionally retires this floor's pre-rename identities on upgrade:
+# Installer replaces app bundles by CFBundleIdentifier, so it will NOT clobber a
+# dev.modernmavericks/com.tailscale app sitting at our install path -- the old
+# bundle must be removed first or the new one is silently skipped. The old daemon
+# must also be stopped here: it holds /var/run/tailscaled.socket, and the new one
+# (loaded by postinstall) cannot bind while it runs.
 {
-  head -1 "$DIST/scripts/preinstall"
-  tail -n +2 "$DIST/scripts/preinstall"
+  sed '/^exit 0$/d' "$DIST/scripts/preinstall"
+  cat <<'PRELEGACY'
+# legacy106 flag-day cleanup: stop + retire the pre-rename identities
+# (com.tailscale.*, dev.modernmavericks.*) so this dev.mavergreen install takes over.
+for d in com.tailscale.tailscaled dev.modernmavericks.tailscaled; do
+  launchctl unload "/Library/LaunchDaemons/$d.plist" 2>/dev/null || true
+done
+rm -f /Library/LaunchDaemons/com.tailscale.tailscaled.plist \
+      /Library/LaunchDaemons/dev.modernmavericks.tailscaled.plist \
+      /Library/LaunchAgents/com.tailscale.systray.plist \
+      /Library/LaunchAgents/com.tailscale.updatecheck.plist \
+      /Library/LaunchAgents/dev.modernmavericks.tailscale-systray.plist \
+      /Library/LaunchAgents/dev.modernmavericks.tailscale-updatecheck.plist
+rm -rf "/Library/Application Support/ModernMavericks"
+APP="/Applications/Mavericks Tailscale.app"
+if [ -d "$APP" ] && \
+   [ "x$(defaults read "$APP/Contents/Info" CFBundleIdentifier 2>/dev/null)" != "xdev.mavergreen.tailscale-systray" ]; then
+  rm -rf "$APP"
+fi
+PRELEGACY
+  echo 'exit 0'
 } > "$scripts/preinstall"
 chmod 0755 "$scripts/preinstall"
 
