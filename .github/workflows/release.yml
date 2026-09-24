@@ -42,8 +42,8 @@ permissions:
 # the old shared group discarded runs silently. golang lost one on 2026-09-09, 13 seconds after the
 # run that evicted it.
 #
-# This repo publishes only from a tag or a dispatch, but keeps the family's one shape: eight of the
-# thirteen product repos auto-cut on a push to main, and a rule that holds only in some of them is a
+# This repo publishes only from a tag or a dispatch, but keeps the family's one shape: most of the
+# family's product repos auto-cut on a push to main, and a rule that holds only in some of them is a
 # rule nobody can apply from memory.
 concurrency:
   group: >-
@@ -63,7 +63,23 @@ jobs:
           fetch-depth: 0   # a local_release repackage counts existing <upstream>-mavericks.* tags
 
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      # spec: mavergreen-conventions SKILL.md "Build OUT of the source tree, onto fast local
+      #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
+      #       environment block, which derives it from TMPDIR; redirect TMPDIR instead.
+      - name: Build out of tree
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+
+      - name: Derive the cross build directory
+        run: |
+          echo "CROSS_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-cross" >> "$GITHUB_ENV"
+          echo "CROSS_LEGACY_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-cross-legacy" >> "$GITHUB_ENV"
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
 
       # Decides two things: what VER is, and whether this run publishes. release-notes.sh (in the
       # package job) works out new-upstream vs. repackage vs. packaging-only itself, from the tags
@@ -137,18 +153,20 @@ jobs:
           # Pin lives in components/golang/version (a watchable path -- see ci.yml's copy of this note
           # and repackage-on-ingredient-bump.yml). Verified against golang's published SHA256SUMS.
           ver="$(cat components/golang/version)"
-          base="https://github.com/ModernMavericks/golang/releases/download/${ver}"
-          curl -fL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          base="https://github.com/Mavergreen/golang/releases/download/${ver}"
+          sums="$RUNNER_TEMP/SHA256SUMS"
+          curl -fL --retry 3 -o "$sums" "$base/SHA256SUMS"
           # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
-          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; pkg=""; sum=""
+          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; cand=""; hash=""
           for pref in golang go126; do
-            cand="${pref}-${gover}-cross-${rev}.pkg"
-            s=$(awk -v f="$cand" '$2==f' SHA256SUMS || true)
-            if [ -n "$s" ]; then pkg="$cand"; sum="$s"; break; fi
+            c="${pref}-${gover}-cross-${rev}.pkg"
+            s=$(awk -v f="$c" '$2==f' "$sums" || true)
+            if [ -n "$s" ]; then cand="$c"; hash="${s%% *}"; break; fi
           done
-          [ -n "$pkg" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
-          curl -fL --retry 3 -o "$pkg" "$base/$pkg"
-          printf '%s\n' "$sum" | shasum -a 256 -c -
+          [ -n "$cand" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
+          pkg="$RUNNER_TEMP/$cand"
+          curl -fL --retry 3 -o "$pkg" "$base/$cand"
+          printf '%s  %s\n' "$hash" "$pkg" | shasum -a 256 -c -
           sudo installer -pkg "$pkg" -target /
           echo "/usr/local/go126-cross/bin" >> "$GITHUB_PATH"
 
@@ -160,43 +178,48 @@ jobs:
       - name: Cache the MacOSX10.9 SDK + assembled SDK106
         uses: actions/cache@v6
         with:
+          # runner.temp, not the workspace: this job ends in assert-tree-clean.sh, and a workspace
+          # cache would dirty the tree it asserts on.
           path: |
-            ${{ github.workspace }}/.sdk-cache
-            ${{ github.workspace }}/.sdk106-cache
+            ${{ runner.temp }}/.sdk-cache
+            ${{ runner.temp }}/.sdk106-cache
           key: macosx10.9-sdk-v2
 
       - name: Build + gate the three Go binaries (x86_64 / min-10.9 / no post-10.9 imports)
         env:
-          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
+          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
         run: |
-          cmake --preset cross
-          cmake --build --preset cross
-          ctest --preset cross
+          shipyard-cmake --preset cross
+          shipyard-cmake --build --preset cross
+          shipyard-ctest --preset cross
 
       - name: Build the Sparkle updater (must not link tailscale)
         run: |
-          cmake -S updater -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
-          cmake --build build/updater
-          BIN=build/updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater
+          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/tailscale-updater"
+          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
 
       - name: Build + gate the 10.6-floor binaries
         env:
-          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
-          MAVERICKS_SDK106_CACHE: ${{ github.workspace }}/.sdk106-cache
+          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ runner.temp }}/.sdk106-cache
         run: |
-          cmake --preset cross-legacy
-          cmake --build --preset cross-legacy
-          ctest --preset cross-legacy
+          shipyard-cmake --preset cross-legacy
+          shipyard-cmake --build --preset cross-legacy
+          shipyard-ctest --preset cross-legacy
 
       - name: Build the 10.6 updater
         env:
-          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.sdk-cache
-          MAVERICKS_SDK106_CACHE: ${{ github.workspace }}/.sdk106-cache
+          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
+          MAVERICKS_SDK106_CACHE: ${{ runner.temp }}/.sdk106-cache
           VER: ${{ steps.ver.outputs.version }}
-        run: sh cmake/build_updater106.sh build/updater106 "$VER"
+        run: sh cmake/build_updater106.sh "$MAVERICKS_BUILD_ROOT/updater106" "$VER"
+
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
       # Bundle the packaging inputs into ONE tarball so executable bits (the binaries, the updater .app's
       # Mach-Os) survive the artifact round-trip -- artifacts otherwise drop file modes.
@@ -204,14 +227,15 @@ jobs:
         run: |
           export COPYFILE_DISABLE=1
           mkdir -p stage
-          cp build-cross/gobin/tailscaled       stage/tailscaled
-          cp build-cross/gobin/tailscale        stage/tailscale
-          cp build-cross/gobin/tailscale-systray stage/tailscale-systray
-          cp -R build/updater/TailscaleUpdater.app stage/TailscaleUpdater.app
-          cp build-cross-legacy/gobin/tailscaled       stage/tailscaled-106
-          cp build-cross-legacy/gobin/tailscale        stage/tailscale-106
-          cp build-cross-legacy/gobin/tailscale-systray stage/tailscale-systray-106
-          cp -R build/updater106/TailscaleUpdater.app stage/TailscaleUpdater106.app
+          ls -l "$CROSS_BUILD_DIR/gobin" "$CROSS_LEGACY_BUILD_DIR/gobin"
+          cp "$CROSS_BUILD_DIR/gobin/tailscaled"        stage/tailscaled
+          cp "$CROSS_BUILD_DIR/gobin/tailscale"         stage/tailscale
+          cp "$CROSS_BUILD_DIR/gobin/tailscale-systray" stage/tailscale-systray
+          cp -R "$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app" stage/TailscaleUpdater.app
+          cp "$CROSS_LEGACY_BUILD_DIR/gobin/tailscaled"        stage/tailscaled-106
+          cp "$CROSS_LEGACY_BUILD_DIR/gobin/tailscale"         stage/tailscale-106
+          cp "$CROSS_LEGACY_BUILD_DIR/gobin/tailscale-systray" stage/tailscale-systray-106
+          cp -R "$MAVERICKS_BUILD_ROOT/updater106/TailscaleUpdater.app" stage/TailscaleUpdater106.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
       - uses: actions/upload-artifact@v7
@@ -230,7 +254,7 @@ jobs:
         with:
           fetch-depth: 0   # generated notes diff ingredient pins against the previous release tag
       - name: Install mavericks-shipyard
-        uses: ModernMavericks/shipyard/.github/actions/install@v1
+        uses: Mavergreen/shipyard/.github/actions/install@v1
       - uses: actions/download-artifact@v8
         with: { name: packaging-inputs, path: dl }
 
@@ -260,8 +284,7 @@ jobs:
         run: |
           # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
           printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          SH="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"
-          [ -d "$SH" ] || { echo "::error::shipyard scripts not found at $SH"; exit 1; }
+          . build/msc.sh
           mkdir -p in dist
           tar -C in -xzf dl/packaging-inputs.tgz          # restores executable bits
           # Wrap the systray binary into the menu-bar .app the package expects.
@@ -269,11 +292,11 @@ jobs:
           PKG="dist/tailscale-$VER.pkg"
 
           # dist/ in the repo holds the LaunchDaemon/Agent plists + pre/postinstall scripts.
-          SHIPYARD_SCRIPTS="$SH" sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
+          sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
             --tailscaled in/tailscaled --tailscale in/tailscale \
             --systray-app "in/Mavericks Tailscale.app" --updater-app in/TailscaleUpdater.app \
-            --daemon-plist "$GITHUB_WORKSPACE/dist/com.tailscale.tailscaled.plist" \
-            --systray-agent "$GITHUB_WORKSPACE/dist/com.tailscale.systray.plist" \
+            --daemon-plist "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscaled.plist" \
+            --systray-agent "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscale-systray.plist" \
             --dist "$GITHUB_WORKSPACE/dist"
 
           # Verify the 10.9.5 floor on the CI-built .pkg before signing/publishing.
@@ -285,7 +308,7 @@ jobs:
           # enclosure points at the versioned release asset; the client /latest/ feed resolves to this
           # full release immediately, so Sparkle clients pick it up right away.
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
-          sh "$SH/sign_and_appcast.sh" \
+          sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" \
             --channel-title "Tailscale for Mavericks" \
             --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
             --notes-file dist/RELEASE_NOTES.md --pkg "$PKG" > dist/appcast.xml
@@ -294,12 +317,12 @@ jobs:
           # 10.6-floor pkg: same version, different binaries + install floor.
           PKG106="dist/tailscale-$VER-macos10.6.pkg"
           sh cmake/make_app.sh in/tailscale-systray-106 "in/Mavericks Tailscale 106.app" "$VER" "$GITHUB_WORKSPACE/Tailscale.icns" 10.6
-          SHIPYARD_SCRIPTS="$SH" sh cmake/package_pkg_legacy106.sh --out "$PKG106" --version "$VER" \
+          sh cmake/package_pkg_legacy106.sh --out "$PKG106" --version "$VER" \
             --tailscaled in/tailscaled-106 --tailscale in/tailscale-106 \
             --systray-app "in/Mavericks Tailscale 106.app" \
             --updater-app in/TailscaleUpdater106.app \
-            --daemon-plist "$GITHUB_WORKSPACE/dist/com.tailscale.tailscaled.plist" \
-            --systray-agent "$GITHUB_WORKSPACE/dist/com.tailscale.systray.plist" \
+            --daemon-plist "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscaled.plist" \
+            --systray-agent "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscale-systray.plist" \
             --dist "$GITHUB_WORKSPACE/dist"
 
           # Serve a SEPARATE 10.6 appcast (not mixed into the Sparkle feed:
@@ -344,7 +367,7 @@ jobs:
     permissions:
       actions: read     # this run's job logs
       contents: read
-    uses: ModernMavericks/shipyard/.github/workflows/scan-for-key.yml@v1
+    uses: Mavergreen/shipyard/.github/workflows/scan-for-key.yml@v1
     with:
       artifact: tailscale-pkg
     secrets:
@@ -361,7 +384,7 @@ jobs:
     needs: [build-macos, package, scan]
     permissions:
       contents: write
-    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1
+    uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
       version: ${{ needs.build-macos.outputs.version }}
       artifact: tailscale-pkg

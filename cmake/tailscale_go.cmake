@@ -1,5 +1,5 @@
 # Cross-build tailscaled / tailscale / tailscale-systray for darwin/amd64 min-10.9 with the
-# ModernMavericks go126 toolchain, then compat_guard each. Source = the pinned upstream
+# Mavergreen go126 toolchain, then compat_guard each. Source = the pinned upstream
 # tailscale/tailscale release tag (the 10.9 story is entirely the go126 toolchain + our patches/overlays,
 # so no fork is needed); our vendored subset (patches/ source tweaks + overlays/ third-party-module
 # 10.9-SDK shims) is applied by build_tailscale.sh, which does all heavy work on LOCAL disk (repo on NFS).
@@ -36,7 +36,7 @@ endif()
 # directory at the other floor would silently test/package the previous floor's binaries
 # (same outputs, dependencies unchanged -> no rebuild). Fail closed instead: each build dir
 # records its floor at first configure and refuses a different one. Presets use separate
-# dirs (build-cross / build-cross-legacy) and never trip this.
+# out-of-tree dirs ($MAVERICKS_BUILD_ROOT/<repo>-cross vs -cross-legacy) and never trip this.
 set(_floor_marker "${CMAKE_BINARY_DIR}/.tailscale-floor")
 if(EXISTS "${_floor_marker}")
   file(READ "${_floor_marker}" _recorded)
@@ -44,8 +44,8 @@ if(EXISTS "${_floor_marker}")
   if(NOT _recorded STREQUAL MAVERICKS_TAILSCALE_FLOOR)
     message(FATAL_ERROR "this build dir was configured for floor ${_recorded}; "
       "changing MAVERICKS_TAILSCALE_FLOOR to ${MAVERICKS_TAILSCALE_FLOOR} here would reuse stale "
-      "floor-${_recorded} binaries. Configure a fresh build dir (the presets do: build-cross vs "
-      "build-cross-legacy).")
+      "floor-${_recorded} binaries. Configure a fresh build dir (the presets do: <repo>-cross "
+      "vs <repo>-cross-legacy under MAVERICKS_BUILD_ROOT).")
   endif()
 else()
   # First configure: reject a pre-marker dir that already has binaries (they
@@ -53,7 +53,7 @@ else()
   if(EXISTS "${CMAKE_BINARY_DIR}/gobin/tailscaled")
     message(FATAL_ERROR "this build dir contains existing binaries but no floor "
       "marker -- they may be from a different floor. Delete the build dir and "
-      "reconfigure (the presets use fresh dirs: build-cross vs build-cross-legacy).")
+      "reconfigure (the presets use fresh dirs: <repo>-cross vs <repo>-cross-legacy).")
   endif()
   file(WRITE "${_floor_marker}" "${MAVERICKS_TAILSCALE_FLOOR}\n")
 endif()

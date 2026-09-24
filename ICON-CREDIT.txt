@@ -7,7 +7,7 @@ Sparkle TailscaleUpdater.app.
 Using the official Tailscale icon is fine here: this is a faithful repackage of the
 upstream Tailscale client (only 10.9 build/compat shims, no behavior changes), the same
 way distro/Homebrew/pkgsrc packages ship upstream branding. Tailscale's own code even
-anticipates third-party packagers via hostinfo.SetPackage() (we set "ModernMavericks").
+anticipates third-party packagers via hostinfo.SetPackage() (we set "Mavergreen").
 The client's BSD-3-Clause license covers the code; the icon is a trademark, so we use it
 nominatively to identify the genuine Tailscale client and mark the build "unofficial
 community build" (see the release notes). If zero-ambiguity is ever wanted, get written

@@ -1,34 +1,35 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 3,
-    "minor": 25,
-    "patch": 0
-  },
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "include": ["/usr/local/mavergreen-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json"],
   "configurePresets": [
     {
       "name": "native",
-      "displayName": "native \u2014 build on Mavericks 10.9 (mavericks-golang go126 .pkg)",
-      "binaryDir": "${sourceDir}/build-native",
+      "inherits": "mavericks-native",
+      "displayName": "native — build on Mavericks 10.9 (mavericks-golang go126 .pkg)",
       "cacheVariables": {
-        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "native"
+        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "native",
+        "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"
       }
     },
     {
       "name": "cross",
-      "displayName": "cross \u2014 build for Mavericks 10.9 on a modern host (go126-cross)",
-      "binaryDir": "${sourceDir}/build-cross",
+      "inherits": "mavericks-cross",
+      "displayName": "cross — build for Mavericks 10.9 on a modern host (go126-cross)",
       "cacheVariables": {
-        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross"
+        "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross",
+        "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"
       }
     },
     {
       "name": "cross-legacy",
-      "displayName": "cross-legacy \u2014 build for Snow Leopard 10.6 on a modern host (go126-cross + legacy106 floor)",
-      "binaryDir": "${sourceDir}/build-cross-legacy",
+      "inherits": "mavericks-cross",
+      "displayName": "cross-legacy — build for Snow Leopard 10.6 on a modern host (go126-cross + legacy106 floor)",
+      "binaryDir": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-cross-legacy",
       "cacheVariables": {
         "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross",
-        "MAVERICKS_TAILSCALE_FLOOR": "10.6"
+        "MAVERICKS_TAILSCALE_FLOOR": "10.6",
+        "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"
       }
     }
   ],

@@ -1,4 +1,4 @@
-Report ModernMavericks as the packaging type via Hostinfo.Package, and root
+Report Mavergreen as the packaging type via Hostinfo.Package, and root
 the 10.6 floor's shim package into the CLI (whose import graph never reaches
 ipn/ipnauth, where the peercred patch roots it for the daemon (the systray has its own blank import via patches/systray.go.patch)).
 
@@ -9,7 +9,7 @@ ipn/ipnauth, where the peercred patch roots it for the daemon (the systray has i
  		hostinfo.SetApp(app)
  	}
 +
-+	hostinfo.SetPackage("ModernMavericks")
++	hostinfo.SetPackage("Mavergreen")
  
  	return startIPNServer(context.Background(), logf, publicLogID, sys)
  }

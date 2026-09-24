@@ -2,7 +2,7 @@ Menu-bar icon only (no "tailscale" text) on macOS; quit cleanly on SIGTERM (so a
 launchd stop/logout/unload does not leave the menu-bar process running); make the
 systray "Connect" action start interactive login on a logged-out node so the login
 URL opens in the system browser (as "tailscale up" would); and add a macOS "Check
-for updates" item that hands off to the bundled ModernMavericks Sparkle updater.
+for updates" item that hands off to the bundled Mavergreen Sparkle updater.
 
 Also blank-imports tailscale.com/legacy106 (the 10.6 floor shims) here, because
 the systray binary's import graph does not reach ipn/ipnauth where the peercred
@@ -131,7 +131,7 @@ machine whose whole point is reaching the tailnet.
  	})
  	menu.rebuildMenu.Enable()
 +
-+	// On macOS (the ModernMavericks packaging) offer a manual update check that
++	// On macOS (the Mavergreen packaging) offer a manual update check that
 +	// hands off to the bundled Sparkle updater. Launching its executable with
 +	// --user runs Sparkle's interactive check (update dialog, or "you're up to
 +	// date"); the same executable is what the daily LaunchAgent runs with
@@ -145,8 +145,8 @@ machine whose whole point is reaching the tailnet.
 +		// Probe the 10.6 updater FIRST: if both are installed (a 10.6 pkg
 +		// replaced a 10.9 install), the 10.9 Sparkle binary is incompatible.
 +		for _, p := range []string{
-+			"/Library/Application Support/ModernMavericks/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater",
-+			"/Library/Application Support/ModernMavericks/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater",
++			"/Library/Application Support/Mavergreen/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater",
++			"/Library/Application Support/Mavergreen/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater",
 +		} {
 +			if _, err := os.Stat(p); err == nil { updaterPath = p; break }
 +		}
