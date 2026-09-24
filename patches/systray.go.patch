@@ -145,7 +145,7 @@ machine whose whole point is reaching the tailnet.
 +		// Probe the 10.6 updater FIRST: if both are installed (a 10.6 pkg
 +		// replaced a 10.9 install), the 10.9 Sparkle binary is incompatible.
 +		for _, p := range []string{
-+			"/Library/Application Support/Mavergreen/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater",
++			"/Library/Application Support/Mavergreen/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater106",
 +			"/Library/Application Support/Mavergreen/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater",
 +		} {
 +			if _, err := os.Stat(p); err == nil { updaterPath = p; break }

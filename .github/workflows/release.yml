@@ -235,7 +235,7 @@ jobs:
           cp "$CROSS_LEGACY_BUILD_DIR/gobin/tailscaled"        stage/tailscaled-106
           cp "$CROSS_LEGACY_BUILD_DIR/gobin/tailscale"         stage/tailscale-106
           cp "$CROSS_LEGACY_BUILD_DIR/gobin/tailscale-systray" stage/tailscale-systray-106
-          cp -R "$MAVERICKS_BUILD_ROOT/updater106/TailscaleUpdater.app" stage/TailscaleUpdater106.app
+          cp -R "$MAVERICKS_BUILD_ROOT/updater106/TailscaleUpdater106.app" stage/TailscaleUpdater106.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
       - uses: actions/upload-artifact@v7

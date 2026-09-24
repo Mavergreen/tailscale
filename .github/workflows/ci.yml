@@ -189,7 +189,7 @@ jobs:
         run: |
           VER="$(cat UPSTREAM_VERSION 2>/dev/null || echo 1.0)"
           sh cmake/build_updater106.sh "$MAVERICKS_BUILD_ROOT/updater106" "$VER"
-          BIN="$MAVERICKS_BUILD_ROOT/updater106/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
+          BIN="$MAVERICKS_BUILD_ROOT/updater106/TailscaleUpdater106.app/Contents/MacOS/TailscaleUpdater106"
           ARCHS=$(lipo -info "$BIN" | sed -n 's/.*: //p')
           [ "$ARCHS" = "x86_64" ] || { echo "::error::updater archs: $ARCHS (expected x86_64)"; exit 1; }
           MIN=$(otool -l "$BIN" | awk '/LC_VERSION_MIN_MACOSX/{f=1} f && /version/{print $2; exit}')

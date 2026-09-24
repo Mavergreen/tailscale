@@ -16,7 +16,7 @@ else
 fi
 
 SDK=$(sh "$ROOT/cmake/legacy106/prepare_sdk106.sh" "$PREFIX" "$ROOT")
-APP="$OUT/TailscaleUpdater.app"
+APP="$OUT/TailscaleUpdater106.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # The feed URL is build-configurable so forks get the right repo.
@@ -31,7 +31,7 @@ FEED_URL="${UPDATER_FEED_URL:-https://github.com/${REPO}/releases/latest/downloa
   -Wno-deprecated-declarations -Wno-format-security \
   -DUPDATER_FEED_URL="\"$FEED_URL\"" \
   -framework Cocoa \
-  -o "$APP/Contents/MacOS/TailscaleUpdater" \
+  -o "$APP/Contents/MacOS/TailscaleUpdater106" \
   "$ROOT/updater/updater106.m"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -39,11 +39,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key>              <string>TailscaleUpdater</string>
-  <key>CFBundleIdentifier</key>        <string>dev.modernmavericks.TailscaleUpdater</string>
+  <key>CFBundleName</key>              <string>TailscaleUpdater106</string>
+  <key>CFBundleIdentifier</key>        <string>dev.mavergreen.TailscaleUpdater106</string>
   <key>CFBundleVersion</key>           <string>$VER</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
-  <key>CFBundleExecutable</key>        <string>TailscaleUpdater</string>
+  <key>CFBundleExecutable</key>        <string>TailscaleUpdater106</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>NSPrincipalClass</key>          <string>NSApplication</string>
   <key>LSUIElement</key>               <true/>
