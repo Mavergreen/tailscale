@@ -3,37 +3,6 @@
 # reinstalls the whole bundle and re-runs this to reload the daemon.
 mkdir -p /Library/Tailscale /Library/Logs/Tailscale 2>/dev/null || true
 
-# ONE-TIME MIGRATION off the ModernMavericks identity (flag day 2026-09-22).
-# DELETABLE once no pre-flag-day install survives (see shipyard SKILL.md "Consolidation backlog").
-#
-# Up to 1.102.4-mavericks.7 this product installed its jobs under UPSTREAM's labels (com.tailscale.*)
-# and its pkg as dev.modernmavericks.tailscale. The preinstall stopped the old jobs; Installer never
-# removes a plist the new payload does not carry, so remove them here, before the new daemon loads --
-# else the old daemon comes back beside the new one at the next boot. Only plists that are OURS (see
-# the preinstall: upstream's install-system-daemon writes the same daemon label for its own
-# /usr/local/bin/tailscaled, and that one stays). The daemon's state dir (/Library/Tailscale) is the
-# same before and after and is not touched. The old updater app and its shared dir are retired by
-# the shared agent-load.sh sourced at the end. Scoped to Installer's target volume ($3): with none,
-# nothing is known about where the old install lives, so nothing is removed.
-if [ -n "${3:-}" ]; then
-  OLD_ROOT="${3%/}"
-  OLD_DAEMON="$OLD_ROOT/Library/LaunchDaemons/com.tailscale.tailscaled.plist"
-  OLD_SYSTRAY="$OLD_ROOT/Library/LaunchAgents/com.tailscale.systray.plist"
-  OLD_UPDATECHECK="$OLD_ROOT/Library/LaunchAgents/com.tailscale.updatecheck.plist"
-  if [ -f "$OLD_DAEMON" ] && grep -q '<string>/usr/local/sbin/tailscaled</string>' "$OLD_DAEMON" 2>/dev/null; then
-    rm -f "$OLD_DAEMON" 2>/dev/null || true
-  fi
-  if [ -f "$OLD_SYSTRAY" ] && grep -q '/Contents/MacOS/tailscale-systray</string>' "$OLD_SYSTRAY" 2>/dev/null; then
-    rm -f "$OLD_SYSTRAY" 2>/dev/null || true
-  fi
-  if [ -f "$OLD_UPDATECHECK" ] && grep -q '/ModernMavericks/TailscaleUpdater.app/' "$OLD_UPDATECHECK" 2>/dev/null; then
-    rm -f "$OLD_UPDATECHECK" 2>/dev/null || true
-  fi
-  # The new pkg identifier makes this a different package: forget the old receipt, whose file list
-  # now describes files the new receipt owns.
-  pkgutil --volume "$3" --forget dev.modernmavericks.tailscale >/dev/null 2>&1 || true
-fi
-
 # Daemon (root LaunchDaemon): reload so the freshly-installed binary takes effect.
 launchctl unload /Library/LaunchDaemons/dev.mavergreen.tailscaled.plist 2>/dev/null || true
 launchctl load -w /Library/LaunchDaemons/dev.mavergreen.tailscaled.plist 2>/dev/null || true
@@ -48,24 +17,14 @@ if [ "${CONSOLE_UID:-0}" -gt 0 ] && [ "$CONSOLE_USER" != root ]; then
   # systray.Quit()), and on 10.9 the asuser-nested unload doesn't reliably signal it anyway -- so
   # without an explicit stop, the `load -w` below starts the new instance beside the surviving old one
   # and the user sees TWO menu-bar icons. mav_stop_gui_instance (shared postinstall-stop-gui.sh, staged
-  # beside this script) does the TERM-then-KILL, matching the Contents/MacOS exec name so it also stops
-  # a systray still running from the pre-rename bundle across the app rename.
+  # beside this script) does the TERM-then-KILL.
   . "$(dirname "$0")/stop-gui.sh"
   mav_stop_gui_instance 'Contents/MacOS/tailscale-systray' "$CONSOLE_UID"
-  # One-time cleanup of the pre-rename bundle, but ONLY if it is ours (identity-checked, so we never
-  # delete an unrelated /Applications/Tailscale.app).
-  OLD_APP="/Applications/Tailscale.app"
-  if [ -d "$OLD_APP" ] && \
-     [ "$(defaults read "$OLD_APP/Contents/Info" CFBundleIdentifier 2>/dev/null)" = "dev.modernmavericks.tailscale-systray" ]; then
-    rm -rf "$OLD_APP"
-  fi
   launchctl asuser "$CONSOLE_UID" launchctl load -w /Library/LaunchAgents/dev.mavergreen.tailscale-systray.plist 2>/dev/null || true
 fi
 
 # Daily update-check agent: load logic rendered by mavericks-shipyard's stage_updater.sh, shipped
 # beside this script as agent-load.sh (absent in a no-updater build). Sourced: no exit, MAV_-prefixed.
-# Sourced with this script's own positional args intact: its flag-day migration reads $3 (the target
-# volume) to retire the pre-rename TailscaleUpdater.app.
 AGENT_LOAD="$(dirname "$0")/agent-load.sh"
 [ -f "$AGENT_LOAD" ] && . "$AGENT_LOAD"
 

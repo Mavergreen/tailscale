@@ -64,8 +64,3 @@ include(cmake/tailscale_go.cmake)   # cross-builds tailscaled / tailscale / tail
 # a fixture shaped like the real page (no network).
 add_test(NAME upstream_release_notes_url
   COMMAND sh "${CMAKE_SOURCE_DIR}/tests/upstream-release-notes-url-test.sh")
-
-# The one-time migration off the ModernMavericks identity (flag day 2026-09-22) in dist/scripts: run
-# the real pre/postinstall against a fake volume. DELETABLE together with that migration.
-add_test(NAME flag_day_migration
-  COMMAND sh "${CMAKE_SOURCE_DIR}/tests/flag-day-migration-test.sh")
