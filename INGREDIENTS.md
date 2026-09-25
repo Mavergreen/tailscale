@@ -33,10 +33,3 @@ requires a status check that a fresh bot commit cannot have**, so the old commit
 was rejected outright (`GH006: Required status check "Cross-build + compat gate (macos-26)" is
 expected`) and cut no release at all. Both paths publish inline, with the tag minted by
 `action-gh-release` at the built commit.
-
-## Upgrading a pre-flag-day install
-
-tailscaled's state moved to `/usr/local/mavergreen/var/tailscale/tailscaled.state`; there is no
-migration code carrying the old `/Library/Tailscale/tailscaled.state` over (no users pre-date this
-layout, so none is warranted). On the maintainer's own box, move the file by hand before the daemon
-first starts under the new layout (`mode 0600`), or the node re-registers as a new device.

@@ -38,7 +38,6 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/tailscale-pkg.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 stage="$WORK/stage"; scripts="$WORK/scripts"; comp="$WORK/component.pkg"
 
-# --- product payload (Task 0: Tailscale's native darwin default paths, no path patch) ---
 T="$stage/usr/local/mavergreen/tailscale"
 mkdir -p "$T/sbin" "$T/bin" "$stage/Applications" "$stage/Library/LaunchDaemons" "$stage/Library/LaunchAgents"
 install -m 0755 "$TSD" "$T/sbin/tailscaled"
