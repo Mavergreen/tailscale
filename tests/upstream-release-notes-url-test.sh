@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # build/upstream-release-notes-url.sh: find a version's entry in tailscale's changelog, which is
 # anchored by DATE, not version. Runs against a fixture shaped like the real page -- no network.
 set -eu

@@ -2,7 +2,7 @@ Tailscale.icns is Tailscale's official logo mark, from the Tailscale website
 favicon (https://tailscale.com/favicon.png, 768x768, retrieved 2026-07-27), rendered to
 a standard multi-resolution AppIcon set with `sips` and packed with `iconutil -c icns`.
 It is the shared product icon for both bundles: the menu-bar Tailscale.app and the
-Sparkle TailscaleUpdater.app.
+Sparkle tailscale-updater.app.
 
 Using the official Tailscale icon is fine here: this is a faithful repackage of the
 upstream Tailscale client (only 10.9 build/compat shims, no behavior changes), the same

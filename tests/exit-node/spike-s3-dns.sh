@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- drives scutil and lib.sh's BSD route/netstat/ifconfig helpers
 # Spike S3: does tailscaled's scutil global resolver actually win on this OS? (spec: Phase 0)
 # Run as root, detached:  sudo nohup sh spike-s3-dns.sh OUTDIR >/dev/null 2>&1 &
 # SCOPED_DEFAULTS=1 adds interface-scoped default routes for the physical interface (S1b) before

@@ -5,13 +5,13 @@
   <key>Label</key>
   <string>dev.mavergreen.tailscaled</string>
   <!-- tailscaled has no native daemonize; the LaunchDaemon runs it foreground as root, RunAtLoad +
-       KeepAlive. Explicit --state/--socket = Tailscale's native darwin defaults (Task 0: no path patch),
-       so the menu-bar GUI's default -socket agrees with zero flags. A root tailscaled creates a real
-       utun on 10.9 (proven on this box). -->
+       KeepAlive. --socket is Tailscale's native darwin default (Task 0: no path patch), so the menu-bar
+       GUI's default -socket agrees with zero flags; --state lives under the product's var/ (D3). A root
+       tailscaled creates a real utun on 10.9 (proven on this box). -->
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/sbin/tailscaled</string>
-    <string>--state=/Library/Tailscale/tailscaled.state</string>
+    <string>/usr/local/mavergreen/tailscale/sbin/tailscaled</string>
+    <string>--state=/usr/local/mavergreen/var/tailscale/tailscaled.state</string>
     <string>--socket=/var/run/tailscaled.socket</string>
   </array>
   <key>RunAtLoad</key><true/>

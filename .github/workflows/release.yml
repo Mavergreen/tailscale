@@ -192,7 +192,7 @@ jobs:
           shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
             -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/tailscale-updater"
-          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
+          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/tailscale-updater.app/Contents/MacOS/tailscale-updater"
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
@@ -210,7 +210,7 @@ jobs:
           cp "$CROSS_BUILD_DIR/gobin/tailscaled"        stage/tailscaled
           cp "$CROSS_BUILD_DIR/gobin/tailscale"         stage/tailscale
           cp "$CROSS_BUILD_DIR/gobin/tailscale-systray" stage/tailscale-systray
-          cp -R "$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app" stage/TailscaleUpdater.app
+          cp -R "$MAVERICKS_BUILD_ROOT/tailscale-updater/tailscale-updater.app" stage/tailscale-updater.app
           find stage -name '._*' -delete 2>/dev/null || true
           tar -C stage -czf packaging-inputs.tgz .
       - uses: actions/upload-artifact@v7
@@ -269,7 +269,7 @@ jobs:
           # dist/ in the repo holds the LaunchDaemon/Agent plists + pre/postinstall scripts.
           sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
             --tailscaled in/tailscaled --tailscale in/tailscale \
-            --systray-app "in/Mavericks Tailscale.app" --updater-app in/TailscaleUpdater.app \
+            --systray-app "in/Mavericks Tailscale.app" --updater-app in/tailscale-updater.app \
             --daemon-plist "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscaled.plist" \
             --systray-agent "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscale-systray.plist" \
             --dist "$GITHUB_WORKSPACE/dist"
@@ -284,10 +284,11 @@ jobs:
           # full release immediately, so Sparkle clients pick it up right away.
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
           sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" \
+            --product tailscale --feed-dir dist \
             --channel-title "Tailscale for Mavericks" \
             --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
-            --notes-file dist/RELEASE_NOTES.md --pkg "$PKG" > dist/appcast.xml
-          echo "=== appcast.xml ==="; cat dist/appcast.xml
+            --notes-file dist/RELEASE_NOTES.md --pkg "$PKG"
+          echo "=== tailscale.xml ==="; cat dist/tailscale.xml
       # No SHA256SUMS here: publish-release.yml regenerates it over everything it attaches, so the
       # checksums cover the appcast too and no repo hand-rolls that step.
       # Conformance: the .pkg, the appcast and the version we are about to publish must agree with each
@@ -303,14 +304,14 @@ jobs:
           # numeric sparkle:version that orders strictly after the last published one. The conformance
           # check above verifies artifacts AGREE; it never exercised update ordering, which is the gap
           # the "-mavericks.N compares EQUAL -> you're up to date" bug shipped straight through.
-          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/appcast.xml --version "$VER"
+          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/tailscale.xml --version "$VER"
 
       - uses: actions/upload-artifact@v7
         with:
           name: tailscale-pkg
           path: |
             dist/*.pkg
-            dist/appcast.xml
+            dist/tailscale.xml
             dist/RELEASE_NOTES.md
 
   # Before anything is published: no log of this run, and no file about to be released, carries a

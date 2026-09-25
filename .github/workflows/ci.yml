@@ -102,13 +102,13 @@ jobs:
           shipyard-ctest --preset cross
 
       # Sparkle updater .app: built every run (catches updater breaks). It must NOT link any Tailscale
-      # product (self-update circularity); its own binary is TailscaleUpdater, so skip line 1 of otool.
+      # product (self-update circularity); its own binary is tailscale-updater, so skip line 1 of otool.
       - name: Build the Sparkle updater (must not link tailscale)
         run: |
           shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
             -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/tailscale-updater"
-          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
+          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/tailscale-updater.app/Contents/MacOS/tailscale-updater"
           otool -L "$BIN" | tee /tmp/o.txt
           if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
             echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi

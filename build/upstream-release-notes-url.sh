@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Print the URL of upstream Tailscale's release notes for one version. shipyard's upstream-notes.sh
 # calls this when a release ships a NEW upstream, and links the result from the release notes.
 #   usage: upstream-release-notes-url.sh <upstream-version>      (bare: 1.102.3)

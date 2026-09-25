@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- links CGO Mach-O binaries through the go126 toolchain's Apple-clang/10.9-SDK CC wrapper
 # Build tailscaled / tailscale / tailscale-systray for darwin/amd64 min-10.9 with the Mavergreen
 # go126 toolchain (its go.env default CC wrapper supplies the 10.9 SDK + target flags + legacy shim +
 # -Wl,-U weak-symbol allowances -- so nothing target-specific is passed here). Applies our vendored

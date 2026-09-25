@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- drives lib.sh's BSD route/netstat/ifconfig helpers
 # Print what the exit-node scripts will detect on this machine. Unprivileged and read-only.
 set -u
 . "$(dirname "$0")/lib.sh"

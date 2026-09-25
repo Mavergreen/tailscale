@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # Write UPSTREAM_VERSION = the pinned tailscale source's OWN VERSION.txt at the pinned REF.
 #
 # The pin (components/tailscale/version, Renovate-managed) is the single source of truth: bump the

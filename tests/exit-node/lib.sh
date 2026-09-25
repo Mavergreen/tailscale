@@ -1,3 +1,4 @@
+# platform: macOS-only -- route(8)/netstat/ifconfig/arp/tcpdump/lsof output formats are BSD-specific
 # Shared helpers for the tailscaled exit-node spikes and acceptance runs
 # (docs/superpowers/specs/2026-09-14-tailscaled-darwin-exit-nodes-design.md).
 # Sourced by the scripts beside it, never run directly. route(8), tcpdump and lsof on a root
@@ -7,12 +8,12 @@
 # `route get default` resolves through it.
 #
 # Env (all optional):
-#   TS_BIN     tailscale CLI           (default /usr/local/bin/tailscale)
+#   TS_BIN     tailscale CLI           (default /usr/local/mavergreen/tailscale/bin/tailscale)
 #   TS_SOCKET  tailscaled socket, when not the default
 #   TSD_LOG    tailscaled log          (default /Library/Logs/Tailscale/tailscaled.log)
 #   EXIT_NODE  exit node IP            (default 100.66.57.125, ap-juicer)
 
-TS_BIN=${TS_BIN:-/usr/local/bin/tailscale}
+TS_BIN=${TS_BIN:-/usr/local/mavergreen/tailscale/bin/tailscale}
 TS_SOCKET=${TS_SOCKET:-}
 TSD_LOG=${TSD_LOG:-/Library/Logs/Tailscale/tailscaled.log}
 EXIT_NODE=${EXIT_NODE:-100.66.57.125}

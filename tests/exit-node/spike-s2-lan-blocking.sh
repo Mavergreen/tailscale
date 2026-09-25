@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- drives route(8) and lib.sh's BSD route/netstat/ifconfig helpers
 # Spike S2: enforce LAN blocking by hand, then add link-local halves (spec: Phase 0).
 # Run as root, detached:  sudo nohup sh spike-s2-lan-blocking.sh OUTDIR >/dev/null 2>&1 &
 # Blocks the LAN for ~2 minutes: an SSH session from the LAN to this box will drop.

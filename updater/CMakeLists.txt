@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.16)
 # (a Sparkle host carries no product code) -- the release workflow asserts that.
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9 CACHE STRING "updater runs on the 10.9 box")
 set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING "Intel-only (10.9)")
-project(TailscaleUpdater LANGUAGES OBJC)
+project(tailscale-updater LANGUAGES OBJC)
 find_package(MavericksShipyard REQUIRED)
 include(Mavericks)          # AppleClang gate + build conventions
 include(MavericksSparkle)   # the Sparkle updater .app builder
@@ -17,10 +17,8 @@ include(MavericksSparkle)   # the Sparkle updater .app builder
 # UPSTREAM_VERSION + the shipped tags, not read from a committed file.
 mavericks_resolve_version(MAVERICKS_TAILSCALE_VERSION ROOT "${CMAKE_SOURCE_DIR}/..")
 mavericks_add_updater_app(
-  NAME TailscaleUpdater
+  PRODUCT tailscale
   PRODUCT_NAME "Mavericks Tailscale"
-  BUNDLE_ID dev.mavergreen.TailscaleUpdater
-  FEED_URL "https://github.com/Mavergreen/tailscale/releases/latest/download/appcast.xml"
   ED_PUBKEY_FILE "${CMAKE_SOURCE_DIR}/ed25519_key.pub"
   ICON "${CMAKE_SOURCE_DIR}/../Tailscale.icns"   # shared product icon (also used by the menu-bar Mavericks Tailscale.app)
   VERSION "${MAVERICKS_TAILSCALE_VERSION}"

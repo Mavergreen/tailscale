@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- drives lib.sh's BSD route/netstat/ifconfig helpers against a live tailscaled
 # Acceptance A1-A6, A8 against a PATCHED tailscaled (no manual routes). See the plan's Task 9.
 # Run as root, detached:  sudo EXIT_NODE=100.108.34.102 NETCHANGE=0 RESTARTS=launchd nohup sh acceptance.sh OUTDIR >/dev/null 2>&1 &
 #   RESTARTS=launchd  tailscaled is a LaunchDaemon (KeepAlive restarts it after kill -9)

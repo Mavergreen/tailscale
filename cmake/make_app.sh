@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: host-agnostic
 # make_app.sh <systray-binary> <out .app> <version> [icon.icns]
 # Wrap the tailscale-systray Go binary in a menu-bar-only (LSUIElement) .app. No ObjC -- the Go binary
 # IS the app; the bundle just gives it an Info.plist so LaunchServices treats it as a menu-bar agent.

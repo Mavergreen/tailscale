@@ -1,4 +1,5 @@
 #!/bin/sh
+# platform: macOS-only -- drives route(8) and lib.sh's BSD route/netstat/ifconfig helpers
 # Spike S1: split default routes by hand (spec: Phase 0).
 # Run as root, detached:  sudo NETCHANGE=0 nohup sh spike-s1-default-routes.sh OUTDIR >/dev/null 2>&1 &
 # Logs to OUTDIR/s1.log and reverts itself; the watchdog reverts after 300s regardless.
