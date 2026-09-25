@@ -189,7 +189,8 @@ jobs:
 
       - name: Build the Sparkle updater (must not link tailscale)
         run: |
-          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/tailscale-updater"
           BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/TailscaleUpdater.app/Contents/MacOS/TailscaleUpdater"
           otool -L "$BIN" | tee /tmp/o.txt
