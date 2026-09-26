@@ -1,3 +1,3 @@
 REPO=https://github.com/tailscale/tailscale.git
-REF=v1.102.4
-DIGEST=bbcd7d1fc2054b9189ebc1531acf74bd880ca0c8
+REF=v1.102.5
+DIGEST=5fb2a81b065b0a0bbbfc67ab20a0d9c6a1108115
