@@ -7,17 +7,17 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9)
 set(CMAKE_OSX_ARCHITECTURES x86_64)
 
 # Build mode. "native" = building ON Mavericks 10.9 with the mavericks-golang go126 .pkg
-# (/usr/local/go126, whose go.env ships the CC wrapper: 10.9 SDK + target flags + legacy shim +
-# -Wl,-U weak-symbol allowances). "cross" = a modern host with the go126-cross toolchain on PATH.
+# (/usr/local/mavergreen/go126, whose go.env ships the CC wrapper: 10.9 SDK + target flags + legacy
+# shim + -Wl,-U weak-symbol allowances). "cross" = a modern host with the go126-cross toolchain on PATH.
 # native REQUIRES the .pkg toolchain (its go.env wrapper), NOT pkgsrc go126 (wrapper not upstreamed there).
 set(MAVERICKS_TAILSCALE_MODE "cross")
 set(MAVERICKS_TAILSCALE_NATIVE_GO "")
-if(EXISTS "/usr/local/go126/bin/go")
+if(EXISTS "/usr/local/mavergreen/go126/bin/go")
   execute_process(COMMAND sw_vers -productVersion
     OUTPUT_VARIABLE _osv OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
   if(_osv MATCHES "^10\\.9\\.")
     set(MAVERICKS_TAILSCALE_MODE "native")
-    set(MAVERICKS_TAILSCALE_NATIVE_GO "/usr/local/go126/bin/go")
+    set(MAVERICKS_TAILSCALE_NATIVE_GO "/usr/local/mavergreen/go126/bin/go")
   endif()
 endif()
 message(STATUS "mavericks-tailscale ${MAVERICKS_TAILSCALE_VERSION} — build: ${MAVERICKS_TAILSCALE_MODE}")
