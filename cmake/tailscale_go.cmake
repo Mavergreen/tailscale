@@ -35,7 +35,8 @@ add_custom_command(
 
 # 2. Build the three binaries. Rebuilds when the script, our patches/overlays, or the pin change.
 set(TS_GOBIN "${CMAKE_BINARY_DIR}/gobin")
-set(TS_BINS "${TS_GOBIN}/tailscaled" "${TS_GOBIN}/tailscale" "${TS_GOBIN}/tailscale-systray")
+set(TS_BINS "${TS_GOBIN}/tailscaled" "${TS_GOBIN}/tailscale" "${TS_GOBIN}/tailscale-systray"
+            "${TS_GOBIN}/osrouter.test")
 add_custom_command(
   OUTPUT ${TS_BINS}
   COMMAND sh "${CMAKE_SOURCE_DIR}/cmake/build_tailscale.sh"
@@ -62,3 +63,10 @@ foreach(_b tailscaled tailscale tailscale-systray)
     COMMAND ${CMAKE_COMMAND} -E env MAVERICKS_REQUIRE_DEFINED_SYMBOLS=_clock_gettime
       sh "${MavericksShipyard_SCRIPTS}/assert_binary_compatible.sh" "${TS_GOBIN}/${_b}")
 endforeach()
+
+# 4. The exit-node code's own tests (darwin-exit-nodes.patch), built for 10.9 like the product. A native
+#    build runs them here; a cross build's x86_64 binary is run on a 10.9 guest by tests/on-mavericks.sh
+#    (ci.yml's on-mavericks job), which also runs the root-only live-route test this one skips.
+if(MAVERICKS_TAILSCALE_MODE STREQUAL "native")
+  add_test(NAME exit_node_tests COMMAND "${TS_GOBIN}/osrouter.test" -test.run "^TestDarwin" -test.v)
+endif()

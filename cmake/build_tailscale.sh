@@ -64,4 +64,9 @@ for spec in tailscaled:./cmd/tailscaled tailscale:./cmd/tailscale tailscale-syst
   "$GO" build -ldflags "$LD" -o "$OUT/$name" "$pkg"
   [ -f "$OUT/$name" ] || { echo "FATAL: no $name produced" >&2; exit 1; }
 done
-echo "OK: tailscaled / tailscale / tailscale-systray -> $OUT"
+# 4. The exit-node code's tests, as a 10.9 binary: run by ctest on a native build and by
+#    tests/on-mavericks.sh on a 10.9 guest. Never packaged: release.yml stages the three above by name.
+echo ">> build osrouter.test"
+"$GO" test -c -ldflags=-linkmode=external -o "$OUT/osrouter.test" ./wgengine/router/osrouter
+[ -f "$OUT/osrouter.test" ] || { echo "FATAL: no osrouter.test produced" >&2; exit 1; }
+echo "OK: tailscaled / tailscale / tailscale-systray / osrouter.test -> $OUT"
