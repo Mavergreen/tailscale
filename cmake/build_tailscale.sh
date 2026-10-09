@@ -43,7 +43,8 @@ echo ">> go mod vendor"; "$GO" mod vendor
 echo ">> overlay certstore shim"
 patch -p4 -d vendor/github.com/tailscale/certstore < "$ROOT/overlays/certstore_darwin.go.patch"
 if [ -d vendor/fyne.io/systray ]; then
-  echo ">> overlay systray shim"; cp "$ROOT/overlays/systray_darwin.m" vendor/fyne.io/systray/systray_darwin.m
+  echo ">> overlay systray shim"
+  patch -p0 -d vendor/fyne.io/systray < "$ROOT/overlays/systray_darwin.m.patch"
 fi
 
 # 3. Build each binary. -linkmode=external routes even pure-Go binaries through go.env's min-10.9 CC
