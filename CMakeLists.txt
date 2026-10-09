@@ -6,19 +6,31 @@ project(mavericks_tailscale LANGUAGES NONE)
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9)
 set(CMAKE_OSX_ARCHITECTURES x86_64)
 
-# Build mode. "native" = building ON Mavericks 10.9 with the mavericks-golang go126 .pkg
-# (/usr/local/mavergreen/go126, whose go.env ships the CC wrapper: 10.9 SDK + target flags + legacy
-# shim + -Wl,-U weak-symbol allowances). "cross" = a modern host with the go126-cross toolchain on PATH.
-# native REQUIRES the .pkg toolchain (its go.env wrapper), NOT pkgsrc go126 (wrapper not upstreamed there).
+# The Go line (e.g. 1.27.2-mavericks.1 -> 127) is derived from the toolchain pin, as ci.yml/release.yml do,
+# so moving to the next line is the pin plus renovate.json, nothing here.
+file(STRINGS "${CMAKE_SOURCE_DIR}/components/golang/version" _gopin LIMIT_COUNT 1)
+if(NOT _gopin MATCHES "^([0-9]+)\\.([0-9]+)\\.")
+  message(FATAL_ERROR "components/golang/version: cannot read a Go line from '${_gopin}'")
+endif()
+set(MAVERICKS_TAILSCALE_GO_LINE "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
+
+# Build mode. "native" = building ON Mavericks 10.9 with that line's Mavergreen golang .pkg
+# (/usr/local/mavergreen/go<line>, whose go.env ships the CC wrapper: 10.9 SDK + target flags + legacy
+# shim + -Wl,-U weak-symbol allowances). "cross" = a modern host with go<line>-cross on PATH.
+# native REQUIRES the .pkg toolchain (its go.env wrapper), NOT pkgsrc's go (wrapper not upstreamed there).
 set(MAVERICKS_TAILSCALE_MODE "cross")
 set(MAVERICKS_TAILSCALE_NATIVE_GO "")
-if(EXISTS "/usr/local/mavergreen/go126/bin/go")
-  execute_process(COMMAND sw_vers -productVersion
-    OUTPUT_VARIABLE _osv OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  if(_osv MATCHES "^10\\.9\\.")
-    set(MAVERICKS_TAILSCALE_MODE "native")
-    set(MAVERICKS_TAILSCALE_NATIVE_GO "/usr/local/mavergreen/go126/bin/go")
+set(_native_go "/usr/local/mavergreen/go${MAVERICKS_TAILSCALE_GO_LINE}/bin/go")
+execute_process(COMMAND sw_vers -productVersion
+  OUTPUT_VARIABLE _osv OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(_osv MATCHES "^10\\.9\\.")
+  if(NOT EXISTS "${_native_go}")
+    message(FATAL_ERROR "A native build needs ${_native_go}: install the native .pkg from "
+      "https://github.com/Mavergreen/golang-${MAVERICKS_TAILSCALE_GO_LINE}/releases "
+      "(components/golang/version pins ${_gopin}).")
   endif()
+  set(MAVERICKS_TAILSCALE_MODE "native")
+  set(MAVERICKS_TAILSCALE_NATIVE_GO "${_native_go}")
 endif()
 message(STATUS "mavericks-tailscale ${MAVERICKS_TAILSCALE_VERSION} — build: ${MAVERICKS_TAILSCALE_MODE}")
 
@@ -34,7 +46,7 @@ if(NOT MAVERICKS_TAILSCALE_EXPECTED_MODE STREQUAL MAVERICKS_TAILSCALE_MODE)
 endif()
 
 # Shared machinery: compat_guard + the (later) updater/sign/floor scripts. The 10.9 SDK, target flags,
-# and legacy shim are supplied by the go126 toolchain's default CC wrapper (its go.env).
+# and legacy shim are supplied by the Mavergreen Go toolchain's default CC wrapper (its go.env).
 find_package(MavericksShipyard REQUIRED)
 
 # The product version (feeds the .pkg name + the release tag). NOT passed to project(VERSION ...): the
@@ -45,7 +57,7 @@ find_package(MavericksShipyard REQUIRED)
 # replaces still said 1.98.8-mavericks.1 while releases were at 1.102.0 -- two upstreams stale.
 mavericks_resolve_version(MAVERICKS_TAILSCALE_VERSION)
 
-# The Go compiler: the native go126 .pkg on the box, or go126-cross on PATH for a cross build.
+# The Go compiler: the native go<line> .pkg on the box, or go<line>-cross on PATH for a cross build.
 if(MAVERICKS_TAILSCALE_MODE STREQUAL "native")
   set(MAVERICKS_TAILSCALE_GO "${MAVERICKS_TAILSCALE_NATIVE_GO}")
 else()
