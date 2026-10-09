@@ -1,207 +1,48 @@
-Exit nodes for tailscaled on darwin: split routes, a delete guard, and scoped bypass routes.
-
 --- wgengine/router/osrouter/router_userspace_bsd.go.orig
 +++ wgengine/router/osrouter/router_userspace_bsd.go
-@@ -8,6 +8,7 @@
- import (
- 	"fmt"
- 	"log"
-+	"net"
- 	"net/netip"
- 	"os/exec"
- 	"runtime"
-@@ -35,6 +36,7 @@ type userspaceBSDRouter struct {
+@@ -29,6 +29,7 @@
  	tunname string
  	local   []netip.Prefix
  	routes  map[netip.Prefix]bool
-+	bypass  *bypassManager // non-nil on darwin
++	bypass  *bypassManager // nil off darwin; see router_userspace_bsd_bypass.go
  }
  
- func newUserspaceBSDRouter(logf logger.Logf, tundev tun.Device, netMon *netmon.Monitor, health *health.Tracker) (router.Router, error) {
-@@ -43,12 +45,16 @@ func newUserspaceBSDRouter(logf logger.Logf, tundev tun.Device, netMon *netmon.M
- 		return nil, err
- 	}
- 
--	return &userspaceBSDRouter{
-+	r := &userspaceBSDRouter{
- 		logf:    logf,
+ func newUserspaceBSDRouter(logf logger.Logf, tundev tun.Device, netMon *netmon.Monitor, health *health.Tracker) (*userspaceBSDRouter, error) {
+@@ -42,6 +43,7 @@
  		netMon:  netMon,
  		health:  health,
  		tunname: tunname,
--	}, nil
-+	}
-+	if runtime.GOOS == "darwin" {
-+		r.bypass = newBypassManager(logf, netMon)
-+	}
-+	return r, nil
++		bypass:  newBypassManager(logf, netMon),
+ 	}, nil
  }
  
- func (r *userspaceBSDRouter) addrsToRemove(newLocalAddrs []netip.Prefix) (remove []netip.Prefix) {
-@@ -106,6 +112,54 @@ func inet(p netip.Prefix) string {
- 	return "inet"
- }
- 
-+// osRoutePrefixes returns the prefixes to program into the OS routing table
-+// so that traffic for route goes to the tunnel.
-+func osRoutePrefixes(route netip.Prefix) []netip.Prefix {
-+	if runtime.GOOS == "darwin" {
-+		return darwinRoutePrefixes(route)
-+	}
-+	return []netip.Prefix{route}
-+}
-+
-+// darwinRoutePrefixes returns the two halves of p (or p itself, if it is a
-+// single address).
-+//
-+// The darwin kernel refuses a route whose destination and netmask match an
-+// existing unscoped route, such as the default route or a LAN's connected
-+// route, so installing 0.0.0.0/0 for an exit node (or a LAN prefix, to block
-+// it) fails with "File exists". Each half is more specific, so the halves take
-+// precedence without replacing the original route.
-+func darwinRoutePrefixes(p netip.Prefix) []netip.Prefix {
-+	p = p.Masked()
-+	if p.IsSingleIP() {
-+		return []netip.Prefix{p}
-+	}
-+	bits := p.Bits()
-+	hi := p.Addr().AsSlice()
-+	hi[bits/8] |= 0x80 >> (bits % 8)
-+	hiAddr, _ := netip.AddrFromSlice(hi)
-+	return []netip.Prefix{
-+		netip.PrefixFrom(p.Addr(), bits+1),
-+		netip.PrefixFrom(hiAddr, bits+1),
-+	}
-+}
-+
-+// routedViaTun returns the prefixes the routing table currently sends through
-+// the tunnel, or nil if it can't tell.
-+func (r *userspaceBSDRouter) routedViaTun() map[netip.Prefix]bool {
-+	ifi, err := net.InterfaceByName(r.tunname)
-+	if err != nil {
-+		r.logf("routedViaTun: %v", err)
-+		return nil
-+	}
-+	msgs, err := fetchRIB()
-+	if err != nil {
-+		r.logf("routedViaTun: reading routing table: %v", err)
-+		return nil
-+	}
-+	return tunRoutes(msgs, ifi.Index)
-+}
-+
- func (r *userspaceBSDRouter) Set(cfg *router.Config) (reterr error) {
- 	if cfg == nil {
- 		cfg = &shutdownConfig
-@@ -160,42 +214,73 @@ func (r *userspaceBSDRouter) Set(cfg *router.Config) (reterr error) {
+@@ -154,6 +156,7 @@
  		}
  		newRoutes[route] = true
  	}
-+	// On darwin, while an exit node's default routes are installed, keep
-+	// tailscaled's own (interface-bound) sockets off the tunnel. Bypass
-+	// routes go in before the exit node routes and come out after them.
-+	exitNode := false
-+	for route := range newRoutes {
-+		if route.Bits() == 0 {
-+			exitNode = true
-+		}
-+	}
-+	if r.bypass != nil && exitNode {
-+		r.bypass.set(true)
-+	}
-+
-+	// On darwin, a delete matches any route with the same destination, so
-+	// only delete what the tunnel actually has: deleting a route whose add
-+	// failed would delete the user's own route instead.
-+	var viaTun map[netip.Prefix]bool
-+	if runtime.GOOS == "darwin" {
-+		viaTun = r.routedViaTun()
-+	}
++	newRoutes = r.darwinBeforeRoutes(cfg, newRoutes, resetRoutes)
  	// Delete any preexisting routes.
  	for route := range r.routes {
  		if resetRoutes || !newRoutes[route] {
--			net := netipx.PrefixIPNet(route)
--			nip := net.IP.Mask(net.Mask)
--			nstr := fmt.Sprintf("%v/%d", nip, route.Bits())
--			del := "del"
--			if version.OS() == "macOS" {
--				del = "delete"
--			}
--			routedel := []string{"route", "-q", "-n",
--				del, "-" + inet(route), nstr,
--				"-iface", r.tunname}
--			out, err := cmd(routedel...).CombinedOutput()
--			if err != nil {
--				r.logf("route del failed: %v: %v\n%s", routedel, err, out)
--				setErr(err)
-+			for _, p := range osRoutePrefixes(route) {
-+				if viaTun != nil && !viaTun[p] {
-+					r.logf("route del skipped: %v is not routed via %s", p, r.tunname)
-+					continue
-+				}
-+				ipnet := netipx.PrefixIPNet(p)
-+				nip := ipnet.IP.Mask(ipnet.Mask)
-+				nstr := fmt.Sprintf("%v/%d", nip, p.Bits())
-+				del := "del"
-+				if version.OS() == "macOS" {
-+					del = "delete"
-+				}
-+				routedel := []string{"route", "-q", "-n",
-+					del, "-" + inet(p), nstr,
-+					"-iface", r.tunname}
-+				out, err := cmd(routedel...).CombinedOutput()
-+				if err != nil {
-+					r.logf("route del failed: %v: %v\n%s", routedel, err, out)
-+					setErr(err)
-+				}
- 			}
+@@ -191,6 +194,8 @@
  		}
  	}
- 	// Add the routes.
- 	for route := range newRoutes {
- 		if resetRoutes || !r.routes[route] {
--			net := netipx.PrefixIPNet(route)
--			nip := net.IP.Mask(net.Mask)
--			nstr := fmt.Sprintf("%v/%d", nip, route.Bits())
--			routeadd := []string{"route", "-q", "-n",
--				"add", "-" + inet(route), nstr,
--				"-iface", r.tunname}
--			out, err := cmd(routeadd...).CombinedOutput()
--			if err != nil {
--				r.logf("addr add failed: %v: %v\n%s", routeadd, err, out)
--				setErr(err)
-+			for _, p := range osRoutePrefixes(route) {
-+				ipnet := netipx.PrefixIPNet(p)
-+				nip := ipnet.IP.Mask(ipnet.Mask)
-+				nstr := fmt.Sprintf("%v/%d", nip, p.Bits())
-+				routeadd := []string{"route", "-q", "-n",
-+					"add", "-" + inet(p), nstr,
-+					"-iface", r.tunname}
-+				out, err := cmd(routeadd...).CombinedOutput()
-+				if err != nil {
-+					r.logf("addr add failed: %v: %v\n%s", routeadd, err, out)
-+					setErr(err)
-+				}
- 			}
- 		}
- 	}
-+	if r.bypass != nil && !exitNode {
-+		r.bypass.set(false)
-+	}
  
++	r.darwinAfterRoutes(cfg)
++
  	// Store the interface and routes so we know what to change on an update.
  	if reterr == nil {
-@@ -207,5 +292,8 @@ func (r *userspaceBSDRouter) Set(cfg *router.Config) (reterr error) {
+ 		r.local = append([]netip.Prefix{}, cfg.LocalAddrs...)
+@@ -201,5 +206,6 @@
  }
  
  func (r *userspaceBSDRouter) Close() error {
-+	if r.bypass != nil {
-+		r.bypass.close()
-+	}
++	r.bypass.close()
  	return nil
  }
 --- /dev/null
 +++ wgengine/router/osrouter/router_userspace_bsd_bypass.go
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,658 @@
 +// Copyright (c) Tailscale Inc & contributors
 +// SPDX-License-Identifier: BSD-3-Clause
 +
@@ -223,6 +64,7 @@ Exit nodes for tailscaled on darwin: split routes, a delete guard, and scoped by
 +	"golang.org/x/sys/unix"
 +	"tailscale.com/net/netmon"
 +	"tailscale.com/types/logger"
++	"tailscale.com/wgengine/router"
 +)
 +
 +// RTF_IFSCOPE and RTF_WASCLONED aren't defined by golang.org/x/sys/unix on
@@ -749,5 +591,251 @@ Exit nodes for tailscaled on darwin: split routes, a delete guard, and scoped by
 +		if out, err := b.run(r.args("delete")...); err != nil {
 +			b.logf("bypass route delete failed: %v: %v\n%s", r.args("delete"), err, out)
 +		}
++	}
++}
++
++// darwinBeforeRoutes adapts Set's route programming to darwin. Set calls it
++// once it has computed newRoutes and before it deletes and adds routes; Set
++// programs the routes it returns, and deletes only what is left in r.routes.
++// Off darwin it returns newRoutes unchanged.
++func (r *userspaceBSDRouter) darwinBeforeRoutes(cfg *router.Config, newRoutes map[netip.Prefix]bool, resetRoutes bool) map[netip.Prefix]bool {
++	if runtime.GOOS != "darwin" {
++		return newRoutes
++	}
++	// While an exit node's default routes are installed, keep tailscaled's
++	// own (interface-bound) sockets off the tunnel. Bypass routes go in
++	// before the exit node routes and come out after them.
++	if hasDefaultRoute(cfg) {
++		r.bypass.set(true)
++	}
++	expanded := expandRoutes(newRoutes)
++	// A delete matches any route with the same destination, so only delete
++	// what the tunnel actually has: deleting a route whose add failed would
++	// delete the user's own route instead.
++	r.routes = deletableRoutes(r.routes, expanded, resetRoutes, r.routedViaTun(), func(p netip.Prefix) {
++		r.logf("route del skipped: %v is not routed via %s", p, r.tunname)
++	})
++	return expanded
++}
++
++// darwinAfterRoutes removes the bypass routes once Set has taken the exit
++// node's default routes out.
++func (r *userspaceBSDRouter) darwinAfterRoutes(cfg *router.Config) {
++	if !hasDefaultRoute(cfg) {
++		r.bypass.set(false)
++	}
++}
++
++func hasDefaultRoute(cfg *router.Config) bool {
++	for _, route := range cfg.Routes {
++		if route.Bits() == 0 {
++			return true
++		}
++	}
++	return false
++}
++
++// expandRoutes replaces each route with the prefixes darwin can actually
++// install for it (see darwinRoutePrefixes).
++func expandRoutes(routes map[netip.Prefix]bool) map[netip.Prefix]bool {
++	out := make(map[netip.Prefix]bool, 2*len(routes))
++	for route := range routes {
++		for _, p := range darwinRoutePrefixes(route) {
++			out[p] = true
++		}
++	}
++	return out
++}
++
++// deletableRoutes returns the routes in old, less those Set would delete
++// (all of them if reset, else those not in want) that viaTun says the
++// tunnel doesn't carry. A nil viaTun means the routing table couldn't be
++// read, and nothing is held back.
++func deletableRoutes(old, want map[netip.Prefix]bool, reset bool, viaTun map[netip.Prefix]bool, skipped func(netip.Prefix)) map[netip.Prefix]bool {
++	out := make(map[netip.Prefix]bool, len(old))
++	for p := range old {
++		if (reset || !want[p]) && viaTun != nil && !viaTun[p] {
++			skipped(p)
++			continue
++		}
++		out[p] = true
++	}
++	return out
++}
++
++// darwinRoutePrefixes returns the two halves of p (or p itself, if it is a
++// single address).
++//
++// The darwin kernel refuses a route whose destination and netmask match an
++// existing unscoped route, such as the default route or a LAN's connected
++// route, so installing 0.0.0.0/0 for an exit node (or a LAN prefix, to block
++// it) fails with "File exists". Each half is more specific, so the halves take
++// precedence without replacing the original route.
++func darwinRoutePrefixes(p netip.Prefix) []netip.Prefix {
++	p = p.Masked()
++	if p.IsSingleIP() {
++		return []netip.Prefix{p}
++	}
++	bits := p.Bits()
++	hi := p.Addr().AsSlice()
++	hi[bits/8] |= 0x80 >> (bits % 8)
++	hiAddr, _ := netip.AddrFromSlice(hi)
++	return []netip.Prefix{
++		netip.PrefixFrom(p.Addr(), bits+1),
++		netip.PrefixFrom(hiAddr, bits+1),
++	}
++}
++
++// routedViaTun returns the prefixes the routing table currently sends through
++// the tunnel, or nil if it can't tell.
++func (r *userspaceBSDRouter) routedViaTun() map[netip.Prefix]bool {
++	ifi, err := net.InterfaceByName(r.tunname)
++	if err != nil {
++		r.logf("routedViaTun: %v", err)
++		return nil
++	}
++	msgs, err := fetchRIB()
++	if err != nil {
++		r.logf("routedViaTun: reading routing table: %v", err)
++		return nil
++	}
++	return tunRoutes(msgs, ifi.Index)
++}
+--- /dev/null
++++ wgengine/router/osrouter/router_userspace_bsd_bypass_test.go
+@@ -0,0 +1,135 @@
++// Copyright (c) Tailscale Inc & contributors
++// SPDX-License-Identifier: BSD-3-Clause
++
++//go:build darwin || freebsd
++
++package osrouter
++
++import (
++	"maps"
++	"net"
++	"net/netip"
++	"os/exec"
++	"runtime"
++	"slices"
++	"strings"
++	"testing"
++)
++
++func prefixes(ss ...string) []netip.Prefix {
++	ps := make([]netip.Prefix, len(ss))
++	for i, s := range ss {
++		ps[i] = netip.MustParsePrefix(s)
++	}
++	return ps
++}
++
++func prefixSet(ss ...string) map[netip.Prefix]bool {
++	m := make(map[netip.Prefix]bool)
++	for _, p := range prefixes(ss...) {
++		m[p] = true
++	}
++	return m
++}
++
++func TestDarwinRoutePrefixes(t *testing.T) {
++	for _, tt := range []struct {
++		in   string
++		want []netip.Prefix
++	}{
++		{"0.0.0.0/0", prefixes("0.0.0.0/1", "128.0.0.0/1")},
++		{"::/0", prefixes("::/1", "8000::/1")},
++		{"192.168.1.0/24", prefixes("192.168.1.0/25", "192.168.1.128/25")},
++		{"192.168.1.7/24", prefixes("192.168.1.0/25", "192.168.1.128/25")},
++		{"10.0.0.0/31", prefixes("10.0.0.0/32", "10.0.0.1/32")},
++		{"100.64.0.1/32", prefixes("100.64.0.1/32")},
++		{"fd7a:115c:a1e0::/48", prefixes("fd7a:115c:a1e0::/49", "fd7a:115c:a1e0:8000::/49")},
++	} {
++		if got := darwinRoutePrefixes(netip.MustParsePrefix(tt.in)); !slices.Equal(got, tt.want) {
++			t.Errorf("darwinRoutePrefixes(%s) = %v, want %v", tt.in, got, tt.want)
++		}
++	}
++}
++
++func TestDarwinExpandRoutes(t *testing.T) {
++	got := expandRoutes(prefixSet("0.0.0.0/0", "10.0.0.0/31", "10.0.0.1/32"))
++	want := prefixSet("0.0.0.0/1", "128.0.0.0/1", "10.0.0.0/32", "10.0.0.1/32")
++	if !maps.Equal(got, want) {
++		t.Errorf("expandRoutes = %v, want %v", got, want)
++	}
++}
++
++func TestDarwinDeletableRoutes(t *testing.T) {
++	old := prefixSet("0.0.0.0/1", "128.0.0.0/1", "100.100.100.100/32")
++	want := prefixSet("100.100.100.100/32")
++	viaTun := prefixSet("0.0.0.0/1", "100.100.100.100/32") // 128.0.0.0/1's add had failed
++
++	var skipped []netip.Prefix
++	got := deletableRoutes(old, want, false, viaTun, func(p netip.Prefix) { skipped = append(skipped, p) })
++	if w := prefixSet("0.0.0.0/1", "100.100.100.100/32"); !maps.Equal(got, w) {
++		t.Errorf("deletableRoutes = %v, want %v (128.0.0.0/1 is not the tunnel's to delete)", got, w)
++	}
++	if !slices.Equal(skipped, prefixes("128.0.0.0/1")) {
++		t.Errorf("skipped %v, want [128.0.0.0/1]", skipped)
++	}
++
++	got = deletableRoutes(old, want, true, prefixSet("0.0.0.0/1"), func(netip.Prefix) {})
++	if w := prefixSet("0.0.0.0/1"); !maps.Equal(got, w) {
++		t.Errorf("deletableRoutes(reset) = %v, want %v (a reset deletes every route, so holds back all not via the tunnel)", got, w)
++	}
++
++	got = deletableRoutes(old, want, true, nil, func(p netip.Prefix) { t.Errorf("skipped %v with an unreadable routing table", p) })
++	if !maps.Equal(got, old) {
++		t.Errorf("deletableRoutes(nil viaTun) = %v, want all of %v", got, old)
++	}
++}
++
++// TestDarwinRoutingTableReadable reads this machine's real routing table the
++// way the exit-node code does, and checks it against route(8). It changes
++// nothing, so it is safe anywhere; on Mac OS X 10.9 it is the check that
++// golang.org/x/net/route parses that kernel's messages.
++func TestDarwinRoutingTableReadable(t *testing.T) {
++	if runtime.GOOS != "darwin" {
++		t.Skip("darwin routing table")
++	}
++	msgs, err := fetchRIB()
++	if err != nil {
++		t.Fatalf("fetchRIB: %v", err)
++	}
++	lo, err := net.InterfaceByName("lo0")
++	if err != nil {
++		t.Fatalf("lo0: %v", err)
++	}
++	if lr := tunRoutes(msgs, lo.Index); !lr[netip.MustParsePrefix("127.0.0.1/32")] {
++		t.Errorf("routes via lo0 = %v, want 127.0.0.1/32 among them", slices.Collect(maps.Keys(lr)))
++	}
++
++	out, err := exec.Command("route", "-n", "get", "-inet", "default").Output()
++	if err != nil {
++		t.Skipf("no IPv4 default route to compare with (route get: %v)", err)
++	}
++	var ifName, gw string
++	for _, line := range strings.Split(string(out), "\n") {
++		k, v, ok := strings.Cut(strings.TrimSpace(line), ": ")
++		switch {
++		case ok && k == "interface":
++			ifName = v
++		case ok && k == "gateway":
++			gw = v
++		}
++	}
++	if ifName == "" || gw == "" {
++		t.Skipf("route get default named no interface and gateway:\n%s", out)
++	}
++	ifi, err := net.InterfaceByName(ifName)
++	if err != nil {
++		t.Fatalf("%s: %v", ifName, err)
++	}
++	gw4, _ := defaultGateways(msgs, ifi.Index, ifName)
++	if gw4.String() != gw {
++		t.Errorf("defaultGateways(%s) = %v, want %s (route(8)'s answer)", ifName, gw4, gw)
++	}
++	if got := staleBypassRoutes(msgs, ifNameByIndex); len(got) != 0 {
++		t.Errorf("staleBypassRoutes on a table tailscaled never touched = %v, want none", got)
 +	}
 +}
