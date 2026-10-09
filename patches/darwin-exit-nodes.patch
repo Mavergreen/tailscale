@@ -601,7 +601,7 @@
 +// programs the routes it returns, and deletes only what is left in r.routes.
 +// Off darwin it returns newRoutes unchanged.
 +func (r *userspaceBSDRouter) darwinBeforeRoutes(cfg *router.Config, newRoutes map[netip.Prefix]bool, resetRoutes bool) map[netip.Prefix]bool {
-+	if runtime.GOOS != "darwin" {
++	if true {
 +		return newRoutes
 +	}
 +	// While an exit node's default routes are installed, keep tailscaled's
