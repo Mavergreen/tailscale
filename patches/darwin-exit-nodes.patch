@@ -1,5 +1,7 @@
 --- wgengine/router/osrouter/router_userspace_bsd.go.orig
 +++ wgengine/router/osrouter/router_userspace_bsd.go
+--- wgengine/router/osrouter/router_userspace_bsd.go.orig
++++ wgengine/router/osrouter/router_userspace_bsd.go
 @@ -29,6 +29,7 @@
  	tunname string
  	local   []netip.Prefix
@@ -703,7 +705,7 @@
 +}
 --- /dev/null
 +++ wgengine/router/osrouter/router_userspace_bsd_bypass_test.go
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,241 @@
 +// Copyright (c) Tailscale Inc & contributors
 +// SPDX-License-Identifier: BSD-3-Clause
 +
@@ -715,11 +717,16 @@
 +	"maps"
 +	"net"
 +	"net/netip"
++	"os"
 +	"os/exec"
 +	"runtime"
 +	"slices"
 +	"strings"
 +	"testing"
++
++	"github.com/tailscale/wireguard-go/tun"
++	"golang.org/x/net/route"
++	"tailscale.com/wgengine/router"
 +)
 +
 +func prefixes(ss ...string) []netip.Prefix {
@@ -810,11 +817,23 @@
 +		t.Errorf("routes via lo0 = %v, want 127.0.0.1/32 among them", slices.Collect(maps.Keys(lr)))
 +	}
 +
++	ifName, gw := routeGetDefault(t)
++	if got := defaultGateway(t, msgs, ifName); got != gw {
++		t.Errorf("defaultGateways(%s) = %v, want %s (route(8)'s answer)", ifName, got, gw)
++	}
++	if got := staleBypassRoutes(msgs, ifNameByIndex); len(got) != 0 {
++		t.Errorf("staleBypassRoutes on a table tailscaled never touched = %v, want none", got)
++	}
++}
++
++// routeGetDefault returns route(8)'s interface and gateway for the IPv4
++// default route, skipping the test if there is none.
++func routeGetDefault(t *testing.T) (ifName, gw string) {
++	t.Helper()
 +	out, err := exec.Command("route", "-n", "get", "-inet", "default").Output()
 +	if err != nil {
-+		t.Skipf("no IPv4 default route to compare with (route get: %v)", err)
++		t.Skipf("no IPv4 default route (route get: %v)", err)
 +	}
-+	var ifName, gw string
 +	for _, line := range strings.Split(string(out), "\n") {
 +		k, v, ok := strings.Cut(strings.TrimSpace(line), ": ")
 +		switch {
@@ -827,15 +846,104 @@
 +	if ifName == "" || gw == "" {
 +		t.Skipf("route get default named no interface and gateway:\n%s", out)
 +	}
++	return ifName, gw
++}
++
++// defaultGateway returns the gateway of the unscoped IPv4 default route
++// through ifName, as the bypass code reads it from the routing table.
++func defaultGateway(t *testing.T, msgs []route.Message, ifName string) string {
++	t.Helper()
 +	ifi, err := net.InterfaceByName(ifName)
 +	if err != nil {
 +		t.Fatalf("%s: %v", ifName, err)
 +	}
 +	gw4, _ := defaultGateways(msgs, ifi.Index, ifName)
-+	if gw4.String() != gw {
-+		t.Errorf("defaultGateways(%s) = %v, want %s (route(8)'s answer)", ifName, gw4, gw)
++	if !gw4.IsValid() {
++		return ""
 +	}
-+	if got := staleBypassRoutes(msgs, ifNameByIndex); len(got) != 0 {
-+		t.Errorf("staleBypassRoutes on a table tailscaled never touched = %v, want none", got)
++	return gw4.String()
++}
++
++// TestDarwinExitNodeRoutesLive selects an exit node through a real utun and
++// the patched router, then deselects it, reading the kernel's routing table
++// after each step. Unpatched, darwin refuses the exit node's 0.0.0.0/0 ("File
++// exists"), and deselecting it deletes the machine's real default route.
++//
++// While the exit node is selected, this machine's traffic goes into a tunnel
++// nothing reads. So it runs only as root and only with
++// TS_TEST_LIVE_ROUTES=1, which tests/on-mavericks.sh sets in a throwaway
++// Mac OS X 10.9 guest.
++func TestDarwinExitNodeRoutesLive(t *testing.T) {
++	if runtime.GOOS != "darwin" {
++		t.Skip("darwin routing table")
 +	}
++	if os.Getenv("TS_TEST_LIVE_ROUTES") != "1" {
++		t.Skip("changes this machine's routes; set TS_TEST_LIVE_ROUTES=1 to run")
++	}
++	if os.Geteuid() != 0 {
++		t.Skip("needs root to create a utun and change routes")
++	}
++	phys, gw := routeGetDefault(t)
++
++	dev, err := tun.CreateTUN("utun", 1280)
++	if err != nil {
++		t.Fatalf("CreateTUN: %v", err)
++	}
++	defer dev.Close()
++	r, err := newUserspaceBSDRouter(t.Logf, dev, nil, nil)
++	if err != nil {
++		t.Fatalf("newUserspaceBSDRouter: %v", err)
++	}
++	defer r.Close()
++	if err := r.Up(); err != nil {
++		t.Fatalf("Up: %v", err)
++	}
++	tunIdx := func() int {
++		ifi, err := net.InterfaceByName(r.tunname)
++		if err != nil {
++			t.Fatalf("%s: %v", r.tunname, err)
++		}
++		return ifi.Index
++	}()
++
++	check := func(step string, want, gone []netip.Prefix) {
++		t.Helper()
++		msgs, err := fetchRIB()
++		if err != nil {
++			t.Fatalf("%s: fetchRIB: %v", step, err)
++		}
++		via := tunRoutes(msgs, tunIdx)
++		for _, p := range want {
++			if !via[p] {
++				t.Errorf("%s: %v is not routed via %s; via it: %v", step, p, r.tunname, slices.Collect(maps.Keys(via)))
++			}
++		}
++		for _, p := range gone {
++			if via[p] {
++				t.Errorf("%s: %v is still routed via %s", step, p, r.tunname)
++			}
++		}
++		if got := defaultGateway(t, msgs, phys); got != gw {
++			t.Errorf("%s: the real default route via %s is %q, want gateway %s left in place", step, phys, got, gw)
++		}
++	}
++
++	local := prefixes("100.64.0.1/32")
++	halves := prefixes("0.0.0.0/1", "128.0.0.0/1")
++	cgnat := prefixes("100.64.0.0/11", "100.96.0.0/11")
++
++	if err := r.Set(&router.Config{LocalAddrs: local, Routes: prefixes("0.0.0.0/0", "100.64.0.0/10")}); err != nil {
++		t.Errorf("Set(exit node selected): %v", err)
++	}
++	check("exit node selected", append(slices.Clone(halves), cgnat...), nil)
++
++	if err := r.Set(&router.Config{LocalAddrs: local, Routes: prefixes("100.64.0.0/10")}); err != nil {
++		t.Errorf("Set(exit node deselected): %v", err)
++	}
++	check("exit node deselected", cgnat, halves)
++
++	if err := r.Set(nil); err != nil {
++		t.Errorf("Set(shutdown): %v", err)
++	}
++	check("shut down", nil, append(slices.Clone(halves), cgnat...))
 +}
