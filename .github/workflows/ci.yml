@@ -1,6 +1,6 @@
 name: CI
 
-# Validate every push and PR: cross-build the three 10.9 Go binaries + the Sparkle updater on
+# Validate every PR and every push to main: cross-build the three 10.9 Go binaries + the Sparkle updater on
 # macos-26 and run the compat gate. No publishing here — releases happen only on
 # <version>-mavericks.<rev> tags (see release.yml).
 #
@@ -8,8 +8,12 @@ name: CI
 # on main requires both jobs -- the cross-build and its run on a real 10.9 guest -- so a bump that
 # breaks either never lands on main.
 
+# spec: ci.yml's on-mavericks job is a required check. A run on a branch push would add a second,
+#       skipped copy of it to the same commit, and GitHub counts a skipped required check as passed --
+#       letting a PR merge before its guest has run. So branches are checked through their PR.
 on:
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -127,15 +131,13 @@ jobs:
   # spec: tests/on-mavericks.sh -- the cross-built binaries run as root on a real 10.9.5 guest
   #       (Mavergreen/mavericks-vm): they load, hostinfo reports the OS version, tailscaled comes up on
   #       a utun and stops cleanly, and the exit-node tests select and deselect an exit node against
-  #       that kernel's routing table. A skip (77) fails here: this job exists so that it runs. Pull
-  #       requests and main only, so a Renovate push does not boot a second guest for its own PR. A
-  #       fork's pull request gets no secrets, so cannot boot the guest: it skips this.
+  #       that kernel's routing table. A skip (77) fails here: this job exists so that it runs. A fork's
+  #       pull request gets no secrets, so cannot boot the guest: it skips this, and since a skipped
+  #       required check counts as passed, a fork's PR is merged by a maintainer who has run it.
   on-mavericks:
     name: On Mac OS X 10.9 (mavericks-vm)
     needs: [build]
-    if: >-
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
-      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
