@@ -14,7 +14,7 @@ for updates" item that hands off to the bundled Mavergreen Sparkle updater.
  	"os/signal"
  	"runtime"
  	"slices"
-@@ -62,7 +63,13 @@
+@@ -63,7 +64,13 @@
  		signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
  		select {
  		case <-interrupt:
@@ -29,7 +29,7 @@ for updates" item that hands off to the bundled Mavergreen Sparkle updater.
  		case <-menu.bgCtx.Done():
  		}
  	}()
-@@ -72,7 +79,11 @@
+@@ -73,7 +80,11 @@
  	// set initial title, which is used by the systray package as the ID of the StatusNotifierItem.
  	// This value will get overwritten later as the client status changes.
  	// This must be called before systray.Run.
@@ -42,7 +42,7 @@ for updates" item that hands off to the bundled Mavergreen Sparkle updater.
  
  	systray.Run(menu.onReady, menu.onExit)
  }
-@@ -95,13 +106,14 @@
+@@ -96,13 +107,14 @@
  	bgCancel context.CancelFunc
  
  	// Top-level menu items
@@ -64,7 +64,7 @@ for updates" item that hands off to the bundled Mavergreen Sparkle updater.
  
  	rebuildCh  chan struct{} // triggers a menu rebuild
  	accountsCh chan ipn.ProfileID
-@@ -347,6 +359,26 @@
+@@ -348,6 +360,26 @@
  	})
  	menu.rebuildMenu.Enable()
  
@@ -91,7 +91,7 @@ for updates" item that hands off to the bundled Mavergreen Sparkle updater.
  	menu.quit = systray.AddMenuItem("Quit", "Quit the app")
  	menu.quit.Enable()
  
-@@ -452,6 +484,17 @@
+@@ -453,6 +485,17 @@
  			if err != nil {
  				log.Printf("error connecting: %v", err)
  			}

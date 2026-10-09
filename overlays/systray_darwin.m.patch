@@ -1,0 +1,140 @@
+Drive the pre-Yosemite NSStatusItem API when built against an SDK older than 10.12
+(TS_LEGACY_STATUSITEM); inert on newer SDKs.
+
+--- systray_darwin.m.orig
++++ systray_darwin.m
+@@ -3,6 +3,27 @@
+ #import <Cocoa/Cocoa.h>
+ #include "systray.h"
+ 
++// Mac OS X 10.9 (Mavericks) support.  Upstream systray_darwin.m uses
++// NSStatusItem.button (10.10), and NSStatusItem.visible / NSStatusItemBehavior
++// / the NSEventType* mask names (10.12), none of which exist in SDKs older than
++// 10.12.  When built against such an SDK we take a legacy path that drives the
++// pre-Yosemite NSStatusItem API directly (image / title / menu).  On 10.12+
++// SDKs TS_LEGACY_STATUSITEM is 0 and the upstream code compiles verbatim, so
++// this change is inert off-Mavericks.
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED < 101200
++#define TS_LEGACY_STATUSITEM 1
++#else
++#define TS_LEGACY_STATUSITEM 0
++#endif
++
++#if TS_LEGACY_STATUSITEM
++  // NSEventTypeApplicationDefined (used in -quit, outside the gated blocks) is
++  // the 10.12 spelling of the pre-existing NSApplicationDefined.
++  #ifndef NSEventTypeApplicationDefined
++    #define NSEventTypeApplicationDefined NSApplicationDefined
++  #endif
++#endif
++
+ #if __MAC_OS_X_VERSION_MIN_REQUIRED < 101400
+ 
+     #ifndef NSControlStateValueOff
+@@ -94,6 +115,13 @@
+   self->menu = [[NSMenu alloc] init];
+   self->menu.delegate = self;
+   self->menu.autoenablesItems = FALSE;
++#if TS_LEGACY_STATUSITEM
++  // Pre-Yosemite NSStatusItem has no `button`.  Configure the item directly and
++  // attach the menu so a click opens it.  This loses the upstream split between
++  // a left-click action and a right-click menu, but yields a working menu.
++  [self->statusItem setHighlightMode:YES];
++  [self->statusItem setMenu:self->menu];
++#else
+   // Once the user has removed it, the item needs to be explicitly brought back,
+   // even restarting the application is insufficient.
+   // Since the interface from Go is relatively simple, for now we ensure it's
+@@ -129,6 +157,7 @@
+                                    NSViewHeightSizable);
+   button.autoresizesSubviews = YES;
+   [button addSubview:rightClicker];
++#endif
+ 
+   systray_ready();
+ }
+@@ -147,31 +176,46 @@
+ }
+ 
+ - (void)setRemovalAllowed {
++#if !TS_LEGACY_STATUSITEM
+   NSStatusItemBehavior behavior = [self->statusItem behavior];
+   behavior |= NSStatusItemBehaviorRemovalAllowed;
+   self->statusItem.behavior = behavior;
++#endif
++  // NSStatusItemBehavior is 10.12+; user-removable status items are unsupported
++  // (and this is a no-op) on older systems.
+ }
+ 
+ - (void)setRemovalForbidden {
++#if !TS_LEGACY_STATUSITEM
+   NSStatusItemBehavior behavior = [self->statusItem behavior];
+   behavior &= ~NSStatusItemBehaviorRemovalAllowed;
+   // Ensure the menu item is visible if it was removed, since we're now
+   // disallowing removal.
+   self->statusItem.visible = TRUE;
+   self->statusItem.behavior = behavior;
++#endif
+ }
+ 
+ - (void)setIcon:(NSImage *)image {
++#if TS_LEGACY_STATUSITEM
++  [self->statusItem setImage:image];
++#else
+   statusItem.button.image = image;
+   [self updateTitleButtonStyle];
++#endif
+ }
+ 
+ - (void)setTitle:(NSString *)title {
++#if TS_LEGACY_STATUSITEM
++  [self->statusItem setTitle:title];
++#else
+   statusItem.button.title = title;
+   [self updateTitleButtonStyle];
++#endif
+ }
+ 
+ - (void)updateTitleButtonStyle {
++#if !TS_LEGACY_STATUSITEM
+   if (statusItem.button.image != nil) {
+     if ([statusItem.button.title length] == 0) {
+       statusItem.button.imagePosition = NSImageOnly;
+@@ -181,11 +225,16 @@
+   } else {
+     statusItem.button.imagePosition = NSNoImage;
+   }
++#endif
+ }
+ 
+ 
+ - (void)setTooltip:(NSString *)tooltip {
++#if TS_LEGACY_STATUSITEM
++  [self->statusItem setToolTip:tooltip];
++#else
+   statusItem.button.toolTip = tooltip;
++#endif
+ }
+ 
+ - (IBAction)menuHandler:(id)sender
+@@ -289,6 +338,12 @@
+ 
+ - (void)show_menu
+ {
++#if TS_LEGACY_STATUSITEM
++  // The menu stays attached (see applicationDidFinishLaunching:), so pop it up
++  // from the status item directly.
++  [self->statusItem popUpStatusItemMenu:self->menu];
++}
++#else
+   // Attach the menu and synthesize a click so AppKit positions it natively,
+   // then detach it in menuDidClose: so the next click reaches the button
+   // action (and the Go tap handlers) again.
+@@ -303,6 +358,7 @@
+     self->statusItem.menu = nil;
+   });
+ }
++#endif
+ 
+ - (void) show_menu_item:(NSNumber*) menuId
+ {

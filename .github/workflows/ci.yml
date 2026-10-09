@@ -1,15 +1,19 @@
 name: CI
 
-# Validate every push and PR: cross-build the three 10.9 Go binaries + the Sparkle updater on
+# Validate every PR and every push to main: cross-build the three 10.9 Go binaries + the Sparkle updater on
 # macos-26 and run the compat gate. No publishing here — releases happen only on
 # <version>-mavericks.<rev> tags (see release.yml).
 #
-# This is also the check that gates Renovate: every dependency-bump PR runs this, and Renovate is
-# configured (platformAutomerge:false) to wait for it to go green before auto-merging — so a bump that
-# breaks the cross-build never lands on main. No branch protection required.
+# This is also the check that gates Renovate: every dependency-bump PR runs this, and branch protection
+# on main requires both jobs -- the cross-build and its run on a real 10.9 guest -- so a bump that
+# breaks either never lands on main.
 
+# spec: ci.yml's on-mavericks job is a required check. A run on a branch push would add a second,
+#       skipped copy of it to the same commit, and GitHub counts a skipped required check as passed --
+#       letting a PR merge before its guest has run. So branches are checked through their PR.
 on:
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -100,6 +104,14 @@ jobs:
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross
           shipyard-ctest --preset cross
+          echo "GOBIN_DIR=$MAVERICKS_BUILD_ROOT/$(basename "$PWD")-cross/gobin" >> "$GITHUB_ENV"
+
+      - name: Keep the binaries for the 10.9 guest
+        uses: actions/upload-artifact@v7
+        with:
+          name: gobin
+          path: ${{ env.GOBIN_DIR }}
+          if-no-files-found: error
 
       # Sparkle updater .app: built every run (catches updater breaks). It must NOT link any Tailscale
       # product (self-update circularity); its own binary is tailscale-updater, so skip line 1 of otool.
@@ -115,3 +127,33 @@ jobs:
 
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+
+  # spec: tests/on-mavericks.sh -- the cross-built binaries run as root on a real 10.9.5 guest
+  #       (Mavergreen/mavericks-vm): they load, hostinfo reports the OS version, tailscaled comes up on
+  #       a utun and stops cleanly, and the exit-node tests select and deselect an exit node against
+  #       that kernel's routing table. A skip (77) fails here: this job exists so that it runs. A fork's
+  #       pull request gets no secrets, so cannot boot the guest: it skips this, and since a skipped
+  #       required check counts as passed, a fork's PR is merged by a maintainer who has run it.
+  on-mavericks:
+    name: On Mac OS X 10.9 (mavericks-vm)
+    needs: [build]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: gobin
+          path: gobin
+      - uses: Mavergreen/mavericks-vm@v1
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          copyback: false
+          debug-on-error: true
+          run: |
+            chmod +x gobin/*
+            status=0; sudo sh tests/on-mavericks.sh gobin || status=$?
+            [ "$status" -eq 0 ] || { echo "tests/on-mavericks.sh exited $status (77 is a skip, a failure here)"; exit 1; }
