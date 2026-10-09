@@ -50,7 +50,7 @@ jobs:
           . build/msc.sh
           sh "$SHIPYARD_SCRIPTS/check-ingredient-pins.sh"
 
-      # The 10.9-correct Go toolchain (mavericks-golang go126 cross .pkg; its go.env CC wrapper supplies
+      # The 10.9-correct Go toolchain (the golang-<line> cross .pkg; its go.env CC wrapper supplies
       # the 10.9 SDK + target flags + legacy shim + -Wl,-U allowances). Cross mode: the root CMakeLists
       # picks `go` from PATH.
       - name: Install patched Go (mavericks-golang cross toolchain)
@@ -60,26 +60,26 @@ jobs:
           # repackage-on-ingredient-bump.yml sees that path change and dispatches a repackage.
           # Verified against golang's published SHA256SUMS.
           ver="$(cat components/golang/version)"
-          base="https://github.com/Mavergreen/golang-126/releases/download/${ver}"
+          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"
+          # The Go line (e.g. 1.27.2 -> 127: repo golang-127, product go127-cross) is derived from the pin,
+          # so moving to the next line is the pin plus renovate.json's packageNameTemplate, nothing here.
+          line="$(printf '%s' "$gover" | cut -d. -f1,2 | tr -d .)"
+          base="https://github.com/Mavergreen/golang-${line}/releases/download/${ver}"
           sums="$RUNNER_TEMP/SHA256SUMS"
           curl -fL --retry 3 -o "$sums" "$base/SHA256SUMS"
-          # golang renamed its cross asset prefix go126- -> golang- at 1.26.5-mavericks.1; accept either.
-          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"; cand=""; hash=""
-          for pref in golang go126; do
-            c="${pref}-${gover}-cross-${rev}.pkg"
-            s=$(awk -v f="$c" '$2==f' "$sums" || true)
-            if [ -n "$s" ]; then cand="$c"; hash="${s%% *}"; break; fi
-          done
-          [ -n "$cand" ] || { echo "::error::no cross pkg for $ver in golang SHA256SUMS"; exit 1; }
+          cand="golang-${gover}-cross-${rev}.pkg"
+          hash="$(awk -v f="$cand" '$2==f {print $1}' "$sums")"
+          [ -n "$hash" ] || { echo "::error::no $cand in golang-${line} ${ver} SHA256SUMS"; exit 1; }
           pkg="$RUNNER_TEMP/$cand"
           curl -fL --retry 3 -o "$pkg" "$base/$cand"
           printf '%s  %s\n' "$hash" "$pkg" | shasum -a 256 -c -
           sudo installer -pkg "$pkg" -target /
-          echo "/usr/local/mavergreen/go126-cross/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/mavergreen/go${line}-cross/bin" >> "$GITHUB_PATH"
+          echo "GO_LINE=$line" >> "$GITHUB_ENV"
 
       - name: Confirm the patched cross toolchain is on PATH
         run: |
-          test "$(command -v go)" = /usr/local/mavergreen/go126-cross/bin/go
+          test "$(command -v go)" = "/usr/local/mavergreen/go${GO_LINE}-cross/bin/go"
           go version
 
       - name: Cache the MacOSX10.9 SDK

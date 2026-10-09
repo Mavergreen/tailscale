@@ -6,7 +6,7 @@
     {
       "name": "native",
       "inherits": "mavericks-native",
-      "displayName": "native — build on Mavericks 10.9 (mavericks-golang go126 .pkg)",
+      "displayName": "native — build on Mavericks 10.9 (Mavergreen golang .pkg)",
       "cacheVariables": {
         "MAVERICKS_TAILSCALE_EXPECTED_MODE": "native",
         "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"
@@ -15,7 +15,7 @@
     {
       "name": "cross",
       "inherits": "mavericks-cross",
-      "displayName": "cross — build for Mavericks 10.9 on a modern host (go126-cross)",
+      "displayName": "cross — build for Mavericks 10.9 on a modern host (Mavergreen golang cross)",
       "cacheVariables": {
         "MAVERICKS_TAILSCALE_EXPECTED_MODE": "cross",
         "MAVERICKS_TAILSCALE_SRC_CACHE": "$env{MAVERICKS_BUILD_ROOT}/${sourceDirName}-srccache"

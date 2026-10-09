@@ -1,12 +1,12 @@
 #!/bin/sh
-# platform: macOS-only -- links CGO Mach-O binaries through the go126 toolchain's Apple-clang/10.9-SDK CC wrapper
+# platform: macOS-only -- links CGO Mach-O binaries through the Mavergreen Go toolchain's Apple-clang/10.9-SDK CC wrapper
 # Build tailscaled / tailscale / tailscale-systray for darwin/amd64 min-10.9 with the Mavergreen
-# go126 toolchain (its go.env default CC wrapper supplies the 10.9 SDK + target flags + legacy shim +
+# Go toolchain (its go.env default CC wrapper supplies the 10.9 SDK + target flags + legacy shim +
 # -Wl,-U weak-symbol allowances -- so nothing target-specific is passed here). Applies our vendored
 # subset: patches/ = source-tree tweaks, overlays/ = third-party-module 10.9-SDK shims.
 #   $1 SRC   pinned clone (read-only reference)
 #   $2 OUT   output dir (binaries land here; a wrksrc/ copy is built alongside)
-#   $3 GO    go binary (the MM go126 .pkg)
+#   $3 GO    go binary (the Mavergreen golang .pkg)
 #   $4 ROOT  repo root (for patches/ + overlays/)
 #   $5 VER   product version (longStamp)
 set -eu
@@ -22,8 +22,8 @@ export COPYFILE_DISABLE=1   # no ._ sidecars when copying off the NFS source
 # `toolchain` directive. Stock Go isn't 10.9-safe (its own binary references post-10.9 symbols, and it
 # lacks our CC wrapper), so an auto-download would silently escape the Mavergreen toolchain and
 # yield binaries of unknown 10.9-safety. With GOTOOLCHAIN=local, a tailscale version that needs a newer
-# Go than our go126 FAILS LOUDLY here -- which (via ci.yml) correctly blocks the Renovate bump until
-# mavericks-golang catches up, instead of shipping a non-10.9 build.
+# Go than our pinned line FAILS LOUDLY here -- which (via ci.yml) correctly blocks the Renovate bump until
+# the pin moves to a Mavergreen golang line that has it, instead of shipping a non-10.9 build.
 export GOTOOLCHAIN=local
 mkdir -p "$WORK" "$OUT"
 rm -rf "$WRK"; mkdir -p "$WRK"
