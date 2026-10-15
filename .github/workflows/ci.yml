@@ -70,12 +70,13 @@ jobs:
           line="$(printf '%s' "$gover" | cut -d. -f1,2 | tr -d .)"
           base="https://github.com/Mavergreen/golang-${line}/releases/download/${ver}"
           sums="$RUNNER_TEMP/SHA256SUMS"
-          curl -fL --retry 3 -o "$sums" "$base/SHA256SUMS"
+          . "$SHIPYARD_SCRIPTS/mavericks_fetch.sh"
+          shipyard_curl "$base/SHA256SUMS" "$sums"
           cand="golang-${gover}-cross-${rev}.pkg"
           hash="$(awk -v f="$cand" '$2==f {print $1}' "$sums")"
           [ -n "$hash" ] || { echo "::error::no $cand in golang-${line} ${ver} SHA256SUMS"; exit 1; }
           pkg="$RUNNER_TEMP/$cand"
-          curl -fL --retry 3 -o "$pkg" "$base/$cand"
+          shipyard_curl "$base/$cand" "$pkg"
           printf '%s  %s\n' "$hash" "$pkg" | shasum -a 256 -c -
           sudo installer -pkg "$pkg" -target /
           echo "/usr/local/mavergreen/go${line}-cross/bin" >> "$GITHUB_PATH"

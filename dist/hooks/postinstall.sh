@@ -11,7 +11,7 @@ if [ -z "$ROOT" ]; then
   if [ "${_uid:-0}" -gt 0 ] && [ "$_user" != root ]; then
     launchctl asuser "$_uid" launchctl unload /Library/LaunchAgents/dev.mavergreen.tailscale-systray.plist 2>/dev/null || true
     . "$(dirname "$0")/stop-gui.sh"
-    mav_stop_gui_instance 'Contents/MacOS/tailscale-systray' "$_uid"
+    shipyard_stop_gui_instance 'Contents/MacOS/tailscale-systray' "$_uid"
     launchctl asuser "$_uid" launchctl load -w /Library/LaunchAgents/dev.mavergreen.tailscale-systray.plist 2>/dev/null || true
   fi
 fi

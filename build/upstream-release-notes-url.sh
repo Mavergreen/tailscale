@@ -17,11 +17,14 @@
 # TAILSCALE_CHANGELOG_SOURCE overrides where the page is read from (tests use a file:// fixture);
 # the printed URL is always the public one.
 set -eu
+SELF="$(cd "$(dirname "$0")" && pwd)"
+. "$SELF/msc.sh"
+. "$SHIPYARD_SCRIPTS/mavericks_fetch.sh"
 ver="${1:?usage: upstream-release-notes-url.sh <upstream-version>}"
 page="https://tailscale.com/changelog"
 src="${TAILSCALE_CHANGELOG_SOURCE:-$page}"
 
-anchor="$( { curl -fsSL --retry 3 --max-time 60 "$src" 2>/dev/null || true; } \
+anchor="$( { shipyard_curl --quiet "$src" - 2>/dev/null || true; } \
   | tr '<' '\n' \
   | awk -v want="Tailscale v$ver" '
       /^div id="[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-client"/ {

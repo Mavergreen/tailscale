@@ -12,6 +12,8 @@
 # file is cheaper than a clone of tailscale.
 set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
+. "$SELF/msc.sh"
+. "$SHIPYARD_SCRIPTS/mavericks_fetch.sh"
 ROOT="$(cd "$SELF/.." && pwd)"
 PIN="$ROOT/components/tailscale/version"
 
@@ -20,7 +22,7 @@ REF=$(sed -n 's/^REF=//p' "$PIN")
 [ -n "$REPO" ] && [ -n "$REF" ] || { echo "derive-upstream-version: malformed $PIN" >&2; exit 1; }
 
 slug=$(printf '%s' "$REPO" | sed -E 's#^https?://github.com/##; s#\.git$##')
-UP=$(curl -fsSL "https://raw.githubusercontent.com/$slug/$REF/VERSION.txt" | tr -d '[:space:]')
+UP=$(shipyard_curl "https://raw.githubusercontent.com/$slug/$REF/VERSION.txt" - | tr -d '[:space:]')
 case "$UP" in
   [0-9]*.[0-9]*.[0-9]*) : ;;
   *) echo "derive-upstream-version: no sane upstream version at $slug@$REF (got '$UP')" >&2; exit 1 ;;

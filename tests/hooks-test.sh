@@ -29,7 +29,7 @@ printf '#!/bin/sh\necho "stat $*" >> "%s/calls"\necho 501\n' "$W2" > "$W2/stub/s
 : > "$W2/calls"
 cp "$R/dist/hooks/postinstall.sh" "$W2/scripts/postinstall"
 cat > "$W2/scripts/stop-gui.sh" <<'STOPGUI'
-mav_stop_gui_instance() {
+shipyard_stop_gui_instance() {
   pkill -TERM -U "$2" -f "$1" 2>/dev/null || true
   sleep 1
   pkill -KILL -U "$2" -f "$1" 2>/dev/null || true
