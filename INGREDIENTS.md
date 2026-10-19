@@ -33,3 +33,7 @@ requires a status check that a fresh bot commit cannot have**, so the old commit
 was rejected outright (`GH006: Required status check "Cross-build + compat gate (macos-26)" is
 expected`) and cut no release at all. Both paths publish inline, with the tag minted by
 `action-gh-release` at the built commit.
+
+## Conformance deviations
+
+- on-target: its 10.9 job (on-mavericks) runs in ci.yml, which publish cannot need; exit: move that job into release.yml and have publish need it
