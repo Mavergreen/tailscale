@@ -9,6 +9,7 @@ upstream, via `.github/workflows/repackage-on-ingredient-bump.yml`.
 |---|---|---|---|
 | Tailscale source (own upstream) | `components/tailscale/version` (`REPO=` + `REF=`) | ✅ `github-tags`, **stable-only** (see below) | `release-on-bump.yml` asks `release.yml` to cut `<upstream>-mavericks.1`, forward-only |
 | Mavergreen Go cross toolchain | `components/golang/version` | ✅ `github-releases` on `Mavergreen/golang-127` (one Go line; moving lines is a hand edit of the pin + `packageNameTemplate`) | watched path → repackage dispatched → `-mavericks.(N+1)` rebuilt on the new Go |
+| Longboat (CI only: `ci.yml` and `release.yml` install it and run `longboat sdk install 10.9` before the Go cross pkg, which requires it; nothing of it ships) | `components/longboat/version` | ✅ `github-releases` on `Mavergreen/longboat`, `YYYYMMDD.N` versioning | no release: excluded from `repackage-on-ingredient-bump.yml`'s paths |
 | MacOSX10.9 SDK, Sparkle framework | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
 
 Not ingredients: `cmake/`, `dist/` (the LaunchDaemon/Agent plists and pre/postinstall scripts), and the

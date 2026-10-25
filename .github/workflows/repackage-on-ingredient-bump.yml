@@ -8,7 +8,7 @@ name: repackage-on-ingredient-bump
 on:
   push:
     branches: [main]
-    paths: ['components/**']
+    paths: ['components/**', '!components/longboat/**']
 
 jobs:
   repackage:

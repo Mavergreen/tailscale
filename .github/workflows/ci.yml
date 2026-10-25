@@ -54,6 +54,14 @@ jobs:
           . build/msc.sh
           sh "$SHIPYARD_SCRIPTS/check-ingredient-pins.sh"
 
+      - name: Install the pinned Longboat and its 10.9 SDK
+        run: |
+          set -eu
+          lb="$(tr -d '[:space:]' < components/longboat/version)"
+          sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$RUNNER_TEMP/longboat"
+          sudo installer -pkg "$RUNNER_TEMP/longboat/longboat-$lb.pkg" -target /
+          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
+
       # The 10.9-correct Go toolchain (the golang-<line> cross .pkg; its go.env CC wrapper supplies
       # the 10.9 SDK + target flags + legacy shim + -Wl,-U allowances). Cross mode: the root CMakeLists
       # picks `go` from PATH.
@@ -87,20 +95,12 @@ jobs:
           test "$(command -v go)" = "/usr/local/mavergreen/go${GO_LINE}-cross/bin/go"
           go version
 
-      - name: Cache the MacOSX10.9 SDK
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.temp }}/.sdk-cache
-          key: macosx10.9-sdk-v1
-
       # cmake resolves the version from UPSTREAM_VERSION + the shipped tags, and UPSTREAM_VERSION is
       # derived from the pin rather than committed -- so derive it before anything configures.
       - name: Derive the upstream version from the pin
         run: sh build/derive-upstream-version.sh
 
       - name: Build + gate the three Go binaries (x86_64 / min-10.9 / no post-10.9 imports)
-        env:
-          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
         run: |
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross

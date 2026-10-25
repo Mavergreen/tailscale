@@ -146,6 +146,14 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
+      - name: Install the pinned Longboat and its 10.9 SDK
+        run: |
+          set -eu
+          lb="$(tr -d '[:space:]' < components/longboat/version)"
+          sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$RUNNER_TEMP/longboat"
+          sudo installer -pkg "$RUNNER_TEMP/longboat/longboat-$lb.pkg" -target /
+          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
+
       - name: Install patched Go (mavericks-golang cross toolchain)
         run: |
           # Pin lives in components/golang/version (a watchable path -- see ci.yml's copy of this note
@@ -174,15 +182,7 @@ jobs:
           test "$(command -v go)" = "/usr/local/mavergreen/go${GO_LINE}-cross/bin/go"
           go version
 
-      - name: Cache the MacOSX10.9 SDK
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.temp }}/.sdk-cache
-          key: macosx10.9-sdk-v1
-
       - name: Build + gate the three Go binaries (x86_64 / min-10.9 / no post-10.9 imports)
-        env:
-          MAVERICKS_SDK_CACHE: ${{ runner.temp }}/.sdk-cache
         run: |
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross
