@@ -1,16 +1,17 @@
 #!/bin/sh
 # platform: macOS-only -- links CGO Mach-O binaries through the Mavergreen Go toolchain's Apple-clang/10.9-SDK CC wrapper
 # Build tailscaled / tailscale / tailscale-systray for darwin/amd64 min-10.9 with the Mavergreen
-# Go toolchain (its go.env default CC wrapper supplies the 10.9 SDK + target flags + legacy shim +
-# -Wl,-U weak-symbol allowances -- so nothing target-specific is passed here). Applies our vendored
-# subset: patches/ = source-tree tweaks, overlays/ = third-party-module 10.9-SDK shims.
-#   $1 SRC   pinned clone (read-only reference)
-#   $2 OUT   output dir (binaries land here; a wrksrc/ copy is built alongside)
-#   $3 GO    go binary (the Mavergreen golang .pkg)
-#   $4 ROOT  repo root (for patches/ + overlays/)
-#   $5 VER   product version (longStamp)
+# Go toolchain (its go.env default CC wrapper supplies the 10.9 SDK + target flags + Recaulk's
+# librecaulk.a + -Wl,-U weak-symbol allowances, but no include path; step 3 adds Recaulk's headers).
+# Applies our vendored subset: patches/ = source-tree tweaks, overlays/ = third-party-module changes.
+#   $1 SRC      pinned clone (read-only reference)
+#   $2 OUT      output dir (binaries land here; a wrksrc/ copy is built alongside)
+#   $3 GO       go binary (the Mavergreen golang .pkg)
+#   $4 ROOT     repo root (for patches/, overlays/, components/golang/version and tests/certstore/)
+#   $5 VER      product version (longStamp)
+#   $6 SCRIPTS  shipyard's scripts directory (fetch-release-pkg.sh, fetch_product_pkg.sh)
 set -eu
-SRC=$1; OUT=$2; GO=$3; ROOT=$4; VER=$5
+SRC=$1; OUT=$2; GO=$3; ROOT=$4; VER=$5; SCRIPTS=$6
 # Build on LOCAL disk. The repo (and thus a repo-relative OUT/SRC) is on NFS: slow, and it leaks
 # ._ AppleDouble sidecars into vendor/ (which then break the build / contaminate archives). wrksrc +
 # the Go build/module caches live under WORK ($HOME/.cache, local); override with MAVERICKS_TAILSCALE_WORK.
@@ -36,18 +37,28 @@ cd "$WRK"
 #    package stamp. (The pkgsrc go.mod + paths patches are pkgsrc-only and deliberately NOT here.)
 for p in "$ROOT"/patches/*.patch; do echo ">> patch $(basename "$p")"; patch -p0 < "$p"; done
 
-# 2. Vendor the module graph, then overlay the third-party 10.9-SDK shims into vendor/ (these modules
-#    call Security/Cocoa APIs newer than the 10.9 SDK and won't compile without a version-gated reimpl).
+# 2. Vendor the module graph, then overlay systray's pre-Yosemite status item into vendor/.
 unset CC
 echo ">> go mod vendor"; "$GO" mod vendor
-echo ">> overlay certstore shim"
-patch -p4 -d vendor/github.com/tailscale/certstore < "$ROOT/overlays/certstore_darwin.go.patch"
 if [ -d vendor/fyne.io/systray ]; then
-  echo ">> overlay systray shim"
+  echo ">> overlay systray status item"
   patch -p0 -d vendor/fyne.io/systray < "$ROOT/overlays/systray_darwin.m.patch"
 fi
+mkdir -p mavergreen
+cp -R "$ROOT/tests/certstore" mavergreen/certstoretest
 
-# 3. Build each binary. -linkmode=external routes even pure-Go binaries through go.env's min-10.9 CC
+# 3. Recaulk's headers, from the Recaulk release the Go toolchain's librecaulk.a came from.
+GOPIN="$(tr -d '[:space:]' < "$ROOT/components/golang/version")"
+GOLINE="$(printf '%s' "${GOPIN%%-mavericks.*}" | cut -d. -f1,2 | tr -d .)"
+INFO="$(sh "$SCRIPTS/fetch-release-pkg.sh" "golang-$GOLINE" "$GOPIN" build-info-native.txt "$WORK/golang-build-info/$GOPIN")"
+RECAULK_VERSION="$(sed -n 's/^recaulk_version=//p' "$INFO")"
+[ -n "$RECAULK_VERSION" ] || { echo "FATAL: golang $GOPIN's build-info names no recaulk_version" >&2; exit 1; }
+RECAULK="$(sh "$SCRIPTS/fetch_product_pkg.sh" recaulk "$RECAULK_VERSION" "$WORK/recaulk")"
+cmp -s "$RECAULK/lib/librecaulk.a" "$("$GO" env GOROOT)/lib/librecaulk.a" \
+  || { echo "FATAL: $GO does not link Recaulk $RECAULK_VERSION's librecaulk.a, so its headers would not match" >&2; exit 1; }
+export CGO_CFLAGS="-O2 -g -isystem $RECAULK/include/recaulk"
+
+# 4. Build each binary. -linkmode=external routes even pure-Go binaries through go.env's min-10.9 CC
 #    wrapper (Go 1.26 internal-links them to a 12.0 floor otherwise -- see mavericks-golang).
 export CGO_ENABLED=1 GOARCH=amd64 GOFLAGS=-mod=vendor
 # Stamp BOTH version strings to the clean upstream semver (e.g. 1.98.8). Without a stamp, tailscale
@@ -64,9 +75,13 @@ for spec in tailscaled:./cmd/tailscaled tailscale:./cmd/tailscale tailscale-syst
   "$GO" build -ldflags "$LD" -o "$OUT/$name" "$pkg"
   [ -f "$OUT/$name" ] || { echo "FATAL: no $name produced" >&2; exit 1; }
 done
-# 4. The exit-node code's tests, as a 10.9 binary: run by ctest on a native build and by
-#    tests/on-mavericks.sh on a 10.9 guest. Never packaged: release.yml stages the three above by name.
+# 5. The exit-node code's tests and certstore's signing/trust tests, as 10.9 binaries: run by ctest on
+#    a native build and by tests/on-mavericks.sh on a 10.9 guest. Never packaged: release.yml stages
+#    the three above by name.
 echo ">> build osrouter.test"
 "$GO" test -c -ldflags=-linkmode=external -o "$OUT/osrouter.test" ./wgengine/router/osrouter
 [ -f "$OUT/osrouter.test" ] || { echo "FATAL: no osrouter.test produced" >&2; exit 1; }
-echo "OK: tailscaled / tailscale / tailscale-systray / osrouter.test -> $OUT"
+echo ">> build certstore.test"
+"$GO" test -c -ldflags=-linkmode=external -o "$OUT/certstore.test" ./mavergreen/certstoretest
+[ -f "$OUT/certstore.test" ] || { echo "FATAL: no certstore.test produced" >&2; exit 1; }
+echo "OK: tailscaled / tailscale / tailscale-systray / osrouter.test / certstore.test -> $OUT"

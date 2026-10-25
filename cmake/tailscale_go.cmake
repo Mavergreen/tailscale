@@ -2,7 +2,7 @@
 # Mavergreen Go toolchain, then compat_guard each. Source = the pinned upstream
 # tailscale/tailscale release tag (the 10.9 story is entirely the Mavergreen Go toolchain + our patches/overlays,
 # so no fork is needed); our vendored subset (patches/ source tweaks + overlays/ third-party-module
-# 10.9-SDK shims) is applied by build_tailscale.sh, which does all heavy work on LOCAL disk (repo on NFS).
+# changes) is applied by build_tailscale.sh, which does all heavy work on LOCAL disk (repo on NFS).
 
 # Read the tailscale source pin (Renovate-tracked, components-style: components/tailscale/version).
 # DIGEST (the commit sha) is what clone_pinned.sh verifies the checkout against; REF is the human label.
@@ -36,37 +36,45 @@ add_custom_command(
 # 2. Build the three binaries. Rebuilds when the script, our patches/overlays, or the pin change.
 set(TS_GOBIN "${CMAKE_BINARY_DIR}/gobin")
 set(TS_BINS "${TS_GOBIN}/tailscaled" "${TS_GOBIN}/tailscale" "${TS_GOBIN}/tailscale-systray"
-            "${TS_GOBIN}/osrouter.test")
+            "${TS_GOBIN}/osrouter.test" "${TS_GOBIN}/certstore.test")
 add_custom_command(
   OUTPUT ${TS_BINS}
   COMMAND sh "${CMAKE_SOURCE_DIR}/cmake/build_tailscale.sh"
              "${TS_SRC}" "${TS_GOBIN}" "${MAVERICKS_TAILSCALE_GO}"
-             "${CMAKE_SOURCE_DIR}" "${MAVERICKS_TAILSCALE_VERSION}"
+             "${CMAKE_SOURCE_DIR}" "${MAVERICKS_TAILSCALE_VERSION}" "${MavericksShipyard_SCRIPTS}"
   DEPENDS "${TS_SRC}/.git/HEAD"
           "${CMAKE_SOURCE_DIR}/cmake/build_tailscale.sh"
           "${CMAKE_SOURCE_DIR}/patches/systray.go.patch"
           "${CMAKE_SOURCE_DIR}/patches/tailscaled.go.patch"
           "${CMAKE_SOURCE_DIR}/patches/hostinfo_darwin.go.patch"
           "${CMAKE_SOURCE_DIR}/patches/darwin-exit-nodes.patch"
-          "${CMAKE_SOURCE_DIR}/overlays/certstore_darwin.go.patch"
           "${CMAKE_SOURCE_DIR}/overlays/systray_darwin.m.patch"
+          "${CMAKE_SOURCE_DIR}/tests/certstore/certstore_test.go"
+          "${CMAKE_SOURCE_DIR}/tests/certstore/trust_darwin.go"
+          "${CMAKE_SOURCE_DIR}/components/golang/version"
           "${CMAKE_SOURCE_DIR}/components/tailscale/version"
   COMMENT "cross-building tailscaled / tailscale / tailscale-systray for 10.9"
   VERBATIM)
 add_custom_target(tailscale_binaries ALL DEPENDS ${TS_BINS})
 
-# 3. Compat gate per binary: x86_64 + min-10.9 + _clock_gettime defined + no post-10.9 imports.
+# 3. Compat gate per binary: x86_64 + min-10.9 + Recaulk's back-fills defined + no post-10.9 imports.
 #    assert_binary_compatible.sh is the shipyard gate (honors MAVERICKS_REQUIRE_DEFINED_SYMBOLS);
-#    the same script container-tools uses for its Go binaries.
+#    the same script container-tools uses for its Go binaries. tailscaled signs through certstore.
 foreach(_b tailscaled tailscale tailscale-systray)
+  set(_defined "_clock_gettime")
+  if(_b STREQUAL "tailscaled")
+    string(APPEND _defined "|_SecKeyCreateSignature|_SecTrustEvaluateWithError|_SecTrustCopyCertificateChain")
+  endif()
   add_test(NAME compat_guard_${_b}
-    COMMAND ${CMAKE_COMMAND} -E env MAVERICKS_REQUIRE_DEFINED_SYMBOLS=_clock_gettime
+    COMMAND ${CMAKE_COMMAND} -E env "MAVERICKS_REQUIRE_DEFINED_SYMBOLS=${_defined}"
       sh "${MavericksShipyard_SCRIPTS}/assert_binary_compatible.sh" "${TS_GOBIN}/${_b}")
 endforeach()
 
-# 4. The exit-node code's own tests (darwin-exit-nodes.patch), built for 10.9 like the product. A native
-#    build runs them here; a cross build's x86_64 binary is run on a 10.9 guest by tests/on-mavericks.sh
-#    (ci.yml's on-mavericks job), which also runs the root-only live-route test this one skips.
+# 4. The exit-node code's own tests (darwin-exit-nodes.patch) and certstore's signing and trust tests
+#    (tests/certstore), built for 10.9 like the product. A native build runs them here; a cross
+#    build's x86_64 binaries are run on a 10.9 guest by tests/on-mavericks.sh (ci.yml's on-mavericks
+#    job), which also runs the root-only live-route test this one skips.
 if(MAVERICKS_TAILSCALE_MODE STREQUAL "native")
   add_test(NAME exit_node_tests COMMAND "${TS_GOBIN}/osrouter.test" -test.run "^TestDarwin" -test.v)
+  add_test(NAME certstore_tests COMMAND "${TS_GOBIN}/certstore.test" -test.v)
 endif()

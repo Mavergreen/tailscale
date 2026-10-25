@@ -2,15 +2,16 @@
 # platform: macOS-only -- runs the built tailscale binaries, as root, on a real Mac OS X 10.9
 # What our patches change, exercised on a real 10.9. CI runs it on a Mavergreen/mavericks-vm guest
 # (ci.yml's on-mavericks job); it runs as well on any 10.9 box:
-#   sudo sh tests/on-mavericks.sh <dir holding tailscaled, tailscale, tailscale-systray, osrouter.test>
+#   sudo sh tests/on-mavericks.sh <dir holding tailscaled, tailscale, tailscale-systray, osrouter.test, certstore.test>
 # A build leaves them in its gobin/ ($MAVERICKS_BUILD_ROOT/<checkout>-<preset>/gobin). Step 4 briefly
-# sends this machine's traffic into a tunnel nothing reads. Exits 77 (SKIP) off 10.9, when not root,
+# sends this machine's traffic into a tunnel nothing reads; step 5 briefly adds a temporary keychain to
+# the keychain search list, and puts the list back. Exits 77 (SKIP) off 10.9, when not root,
 # or without the binaries. POSIX /bin/sh.
 set -eu
 sw="$(sw_vers -productVersion 2>/dev/null || echo unknown)"
 case "$sw" in 10.9*) : ;; *) echo "not 10.9 ($sw) -- skipping"; exit 77;; esac
 BIN=${1:-}
-for b in tailscaled tailscale tailscale-systray osrouter.test; do
+for b in tailscaled tailscale tailscale-systray osrouter.test certstore.test; do
   if [ -z "$BIN" ] || [ ! -x "$BIN/$b" ]; then echo "no $b in '$BIN' -- skipping"; exit 77; fi
 done
 [ "$(id -u)" = 0 ] || { echo "not root -- skipping"; exit 77; }
@@ -98,4 +99,11 @@ within 120 "$BIN/osrouter.test" -test.run '^TestDarwin' -test.v > "$work/out" 2>
 cat "$work/out"
 [ "$status" -eq 0 ] || fail "the exit-node tests exited $status"
 if grep -- '--- SKIP' "$work/out"; then fail "a test skipped: on a 10.9 guest as root, every one must run"; fi
+
+echo "== 5. certstore signs and reads chains through Recaulk's Security back-fills"
+status=0
+within 120 "$BIN/certstore.test" -test.v > "$work/out" 2>&1 || status=$?
+cat "$work/out"
+[ "$status" -eq 0 ] || fail "the certstore tests exited $status"
+if grep -- '--- SKIP' "$work/out"; then fail "a certstore test skipped: on 10.9 every one must run"; fi
 echo "OK: everything ran on $sw"

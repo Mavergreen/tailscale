@@ -15,8 +15,8 @@ endif()
 set(MAVERICKS_TAILSCALE_GO_LINE "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
 
 # Build mode. "native" = building ON Mavericks 10.9 with that line's Mavergreen golang .pkg
-# (/usr/local/mavergreen/go<line>, whose go.env ships the CC wrapper: 10.9 SDK + target flags + legacy
-# shim + -Wl,-U weak-symbol allowances). "cross" = a modern host with go<line>-cross on PATH.
+# (/usr/local/mavergreen/go<line>, whose go.env ships the CC wrapper: 10.9 SDK + target flags + Recaulk
+# + -Wl,-U weak-symbol allowances). "cross" = a modern host with go<line>-cross on PATH.
 # native REQUIRES the .pkg toolchain (its go.env wrapper), NOT pkgsrc's go (wrapper not upstreamed there).
 set(MAVERICKS_TAILSCALE_MODE "cross")
 set(MAVERICKS_TAILSCALE_NATIVE_GO "")
@@ -46,7 +46,7 @@ if(NOT MAVERICKS_TAILSCALE_EXPECTED_MODE STREQUAL MAVERICKS_TAILSCALE_MODE)
 endif()
 
 # Shared machinery: compat_guard + the (later) updater/sign/floor scripts. The 10.9 SDK, target flags,
-# and legacy shim are supplied by the Mavergreen Go toolchain's default CC wrapper (its go.env).
+# and Recaulk are supplied by the Mavergreen Go toolchain's default CC wrapper (its go.env).
 find_package(MavericksShipyard REQUIRED)
 
 # The product version (feeds the .pkg name + the release tag). NOT passed to project(VERSION ...): the
