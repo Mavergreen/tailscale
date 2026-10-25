@@ -15,8 +15,10 @@ import (
 	"math/big"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -51,6 +53,34 @@ func searchList() ([]string, error) {
 		}
 	}
 	return list, nil
+}
+
+const keychainName = "certstore-test.keychain"
+
+func withoutTestKeychains(list []string) []string {
+	var kept []string
+	for _, k := range list {
+		if filepath.Base(k) != keychainName {
+			kept = append(kept, k)
+		}
+	}
+	return kept
+}
+
+func setSearchList(edit func([]string) []string) error {
+	list, err := searchList()
+	if err != nil {
+		return err
+	}
+	next := edit(list)
+	if len(next) == 0 {
+		if len(list) != 0 {
+			return fmt.Errorf("refusing to empty the search list %v", list)
+		}
+		return nil
+	}
+	_, err = security(append([]string{"list-keychains", "-d", "user", "-s"}, next...)...)
+	return err
 }
 
 func issue(tmpl, parent *x509.Certificate, pub, signer any) *x509.Certificate {
@@ -136,21 +166,17 @@ func setUp(dir string) (cleanup func(), err error) {
 	}
 	ecLeaf = issue(template(3, "certstore-test-ec", false), rootCert, &ecKey.PublicKey, rootKey)
 
-	previous, err := searchList()
-	if err != nil {
-		return nil, err
-	}
-	keychain := filepath.Join(dir, "certstore-test.keychain")
+	keychain := filepath.Join(dir, keychainName)
 	if _, err := security("create-keychain", "-p", keychainPassword, keychain); err != nil {
 		return nil, err
 	}
 	cleanup = func() {
-		if _, err := security(append([]string{"list-keychains", "-d", "user", "-s"}, previous...)...); err != nil {
-			fmt.Fprintln(os.Stderr, "RESTORE BY HAND:", err)
+		if err := setSearchList(withoutTestKeychains); err != nil {
+			fmt.Fprintln(os.Stderr, "remove", keychain, "from the keychain search list by hand:", err)
 		}
 		security("delete-keychain", keychain)
 	}
-	if _, err := security(append([]string{"list-keychains", "-d", "user", "-s"}, append(previous, keychain)...)...); err != nil {
+	if err := setSearchList(func(list []string) []string { return append(withoutTestKeychains(list), keychain) }); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -183,7 +209,16 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "setting up a keychain with test identities:", err)
 		os.Exit(1)
 	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signals
+		cleanup()
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}()
 	code := m.Run()
+	signal.Stop(signals)
 	cleanup()
 	os.RemoveAll(dir)
 	os.Exit(code)

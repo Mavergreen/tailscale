@@ -10,8 +10,9 @@
 #   $4 ROOT     repo root (for patches/, overlays/, components/golang/version and tests/certstore/)
 #   $5 VER      product version (longStamp)
 #   $6 SCRIPTS  shipyard's scripts directory (fetch-release-pkg.sh, fetch_product_pkg.sh)
+#   $7 GOLINE   the Go line of components/golang/version (127), as CMakeLists.txt derives it
 set -eu
-SRC=$1; OUT=$2; GO=$3; ROOT=$4; VER=$5; SCRIPTS=$6
+SRC=$1; OUT=$2; GO=$3; ROOT=$4; VER=$5; SCRIPTS=$6; GOLINE=$7
 # Build on LOCAL disk. The repo (and thus a repo-relative OUT/SRC) is on NFS: slow, and it leaks
 # ._ AppleDouble sidecars into vendor/ (which then break the build / contaminate archives). wrksrc +
 # the Go build/module caches live under WORK ($HOME/.cache, local); override with MAVERICKS_TAILSCALE_WORK.
@@ -49,7 +50,6 @@ cp -R "$ROOT/tests/certstore" mavergreen/certstoretest
 
 # 3. Recaulk's headers, from the Recaulk release the Go toolchain's librecaulk.a came from.
 GOPIN="$(tr -d '[:space:]' < "$ROOT/components/golang/version")"
-GOLINE="$(printf '%s' "${GOPIN%%-mavericks.*}" | cut -d. -f1,2 | tr -d .)"
 INFO="$(sh "$SCRIPTS/fetch-release-pkg.sh" "golang-$GOLINE" "$GOPIN" build-info-native.txt "$WORK/golang-build-info/$GOPIN")"
 RECAULK_VERSION="$(sed -n 's/^recaulk_version=//p' "$INFO")"
 [ -n "$RECAULK_VERSION" ] || { echo "FATAL: golang $GOPIN's build-info names no recaulk_version" >&2; exit 1; }

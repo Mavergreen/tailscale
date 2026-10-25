@@ -19,8 +19,12 @@ upstream, via `.github/workflows/repackage-on-ingredient-bump.yml`.
   menu-bar app's behaviour, darwin exit nodes).
 - `overlays/systray_darwin.m.patch`: product-specific behaviour, not a back-fill. fyne.io/systray's
   status item uses `NSStatusItem.button` (10.10) and the 10.12 names; built against the 10.9 SDK, the
-  overlay drives the pre-Yosemite `NSStatusItem` API (image, title, menu) instead. It changes what the
-  menu-bar item does on 10.9, so it has no shared home.
+  overlay drives the pre-Yosemite `NSStatusItem` API (image, title, menu) instead. It is not a
+  Recaulk back-fill: `NSStatusItem.button` is a 10.10 AppKit view that 10.9's status item cannot
+  supply with its real behaviour, so the overlay chooses a different design for 10.9 and changes what
+  the menu-bar item does there. Retire it when fyne.io/systray itself has a pre-10.10 path, or when
+  Tailscale's systray no longer vendors fyne.io/systray (`build_tailscale.sh` already skips the
+  overlay then).
 - certstore carries no overlay: its post-10.9 Security calls (`SecKeyCreateSignature` and the
   `SecKeyAlgorithm` constants, `SecTrustEvaluateWithError`, `SecTrustCopyCertificateChain`) are
   declared by Recaulk's headers and defined by the toolchain's `librecaulk.a`. `tests/certstore`

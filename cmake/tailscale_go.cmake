@@ -42,6 +42,7 @@ add_custom_command(
   COMMAND sh "${CMAKE_SOURCE_DIR}/cmake/build_tailscale.sh"
              "${TS_SRC}" "${TS_GOBIN}" "${MAVERICKS_TAILSCALE_GO}"
              "${CMAKE_SOURCE_DIR}" "${MAVERICKS_TAILSCALE_VERSION}" "${MavericksShipyard_SCRIPTS}"
+             "${MAVERICKS_TAILSCALE_GO_LINE}"
   DEPENDS "${TS_SRC}/.git/HEAD"
           "${CMAKE_SOURCE_DIR}/cmake/build_tailscale.sh"
           "${CMAKE_SOURCE_DIR}/patches/systray.go.patch"
