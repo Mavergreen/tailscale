@@ -1,0 +1,1 @@
+Tailscale and its updater are now built with clang22, and Tailscale with Go 1.27.4-mavericks.14, instead of Apple's compiler and linker.
