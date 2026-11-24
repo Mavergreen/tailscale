@@ -1,9 +1,10 @@
 name: release
 
-# Cross-build the three 10.9-compatible Go binaries (tailscaled + tailscale CLI + tailscale-systray)
-# and the Sparkle updater on macos-26, assemble + EdDSA-sign the product .pkg, render the signed
-# appcast, and attach the .pkg + appcast to a GitHub Release. Every push/PR is validated by ci.yml;
-# this workflow publishes from three entry points, and is the ONLY place a version is decided:
+# Cross-build the three 10.9-compatible Go binaries (tailscaled + tailscale CLI + tailscale-systray) on
+# Linux with go127-cross, build the Sparkle updater there with clang22, assemble the standalone archive
+# and the .pkg derived from it through shipyard's stevedore seams, and run them on a real 10.9 guest.
+# Every push to main and every PR builds and gates all of it; publishing happens only from three entry
+# points, and this workflow is the ONLY place a version is decided:
 #   - a <version>-mavericks.<rev> tag pushed by hand, or
 #   - workflow_dispatch upstream_release=true: a NEW upstream, <pinned upstream>-mavericks.1,
 #     forward-only. Dispatched by release-on-bump.yml when the tailscale source pin moves.
@@ -12,13 +13,16 @@ name: release
 # Both dispatch paths cut and publish INLINE -- the tag is minted by the publish step. Nothing here
 # ever commits to main: branch protection requires a status check that a fresh bot commit cannot
 # have, so the old commit-VERSION-then-push-a-tag approach could not work (and a GITHUB_TOKEN-pushed
-# tag triggers nothing anyway). A plain dispatch builds and gates without publishing.
-# All-or-nothing: the single `publish` job is the only writer to Releases and it `needs` package, so
-# a build failure never ships a partial release.
+# tag triggers nothing anyway). A push, a PR or a plain dispatch builds and gates without publishing.
+# All-or-nothing: the single `publish` job is the only writer to Releases and it `needs` package and
+# on-target, so a build or guest failure never ships a partial release.
 
 on:
   push:
+    branches: [main]
     tags: ['*-mavericks.*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       local_release:
@@ -31,7 +35,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 # Only a pull_request supersedes -- keyed per ref, so a force-push replaces its own predecessor.
 # Everything else (a branch push, a *-mavericks.* tag, a workflow_dispatch) is keyed per RUN and is
@@ -52,8 +56,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-macos:
-    runs-on: macos-26
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
@@ -61,44 +66,53 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # a local_release repackage counts existing <upstream>-mavericks.* tags
+          persist-credentials: false
 
-      - name: Install mavericks-shipyard
-        uses: Mavergreen/shipyard/.github/actions/install@v1
-
-      # spec: mavergreen-conventions SKILL.md "Build OUT of the source tree, onto fast local
-      #       storage" -- exporting MAVERICKS_BUILD_ROOT does not win against the shared preset's own
-      #       environment block, which derives it from TMPDIR; redirect TMPDIR instead.
-      - name: Build out of tree
+      - name: Read the toolchain pins
+        id: pins
         run: |
-          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
-          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "golang=$(tr -d '[:space:]' < components/golang/version)" >> "$GITHUB_OUTPUT"
+          echo "clang22=$(tr -d '[:space:]' < components/clang22/version)" >> "$GITHUB_OUTPUT"
 
-      - name: Derive the cross build directory
-        run: echo "CROSS_BUILD_DIR=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-cross" >> "$GITHUB_ENV"
+      # spec: shipyard .github/actions/install/action.yml `products` -- go127-cross at the golang pin and,
+      #       first, what it requires (sdk109; clang22, named here at its own pin so the Go link and the
+      #       compat guard's Mach-O readers are the clang22 this repo pins), at /usr/local/mavergreen
+      - name: Install mavericks-shipyard and the golang-127 cross toolchain
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+        with:
+          products: clang22@${{ steps.pins.outputs.clang22 }} go127-cross@${{ steps.pins.outputs.golang }}
 
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
 
+      # The ingredient pin list is derived from repackage-on-ingredient-bump.yml's own paths, so the
+      # repackage trigger and the release notes can't drift -- but a glob that matches nothing would
+      # silently mean no repackage and thinner notes. Fail here instead.
+      - name: Guard the ingredient pin declaration
+        run: sh "$SHIPYARD_SCRIPTS/check-ingredient-pins.sh"
+
       # Decides two things: what VER is, and whether this run publishes. release-notes.sh (in the
       # package job) works out new-upstream vs. repackage vs. packaging-only itself, from the tags
-      # and the ingredient pins, so this step no longer needs to track a release "kind".
+      # and the ingredient pins, so this step does not track a release "kind".
       #
-      # THE SHIPPED STATE LIVES IN TAGS. Nothing here is committed back -- branch protection requires
-      # a status check no fresh bot commit can have -- so the version is derived, never read from a
-      # committed file. Two derivations, both shared:
+      # THE SHIPPED STATE LIVES IN TAGS. Nothing here is committed back, so the version is derived,
+      # never read from a committed file. Two derivations, both shared:
       #   build/derive-upstream-version.sh -> UPSTREAM_VERSION, from the pin's own VERSION.txt
       #   resolve-version.sh               -> <upstream>-mavericks.N, from that plus the shipped tags,
       #                                       written to VERSION as a build product so this job's cmake
-      #                                       configure and the updater bundle embed the same string.
-      #   - a *-mavericks.* tag: VER = the tag; publish=yes. Committed notes required.
+      #                                       configure and the package job embed the same string.
+      #   - a *-mavericks.* tag: VER = the tag; publish=true. Committed notes required.
       #   - workflow_dispatch(upstream_release=true): a NEW upstream -- VER = <pinned>-mavericks.1
       #     (auto mode gives N=1 because that upstream has no tags yet), forward-only against the
-      #     newest shipped tag; publish=yes. Dispatched by release-on-bump.yml.
+      #     newest shipped tag; publish=true. Dispatched by release-on-bump.yml.
       #   - workflow_dispatch(local_release=true): a REPACKAGE -- VER = <upstream>-mavericks.(N+1);
-      #     publish=yes. Dispatched by repackage-on-ingredient-bump.yml.
-      #   - anything else (plain dispatch): the shipped N; publish=no.
+      #     publish=true. Dispatched by repackage-on-ingredient-bump.yml.
+      #   - anything else (a push, a PR, a plain dispatch): the shipped N; publish=false.
       - name: Decide version + whether this run publishes
         id: ver
+        env:
+          UPSTREAM_RELEASE: ${{ inputs.upstream_release }}
+          LOCAL_RELEASE: ${{ inputs.local_release }}
         run: |
           UP="$(sh build/derive-upstream-version.sh)"
 
@@ -119,11 +133,11 @@ jobs:
 
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             VER="${GITHUB_REF_NAME}"
-            if [ ! -s "release-notes/$VER.md" ]; then
-              echo "::error::release-notes/$VER.md missing or empty"; exit 1; fi
+            if [ -z "$(ls "release-notes/$VER/changes" 2>/dev/null)" ]; then
+              echo "::error::release-notes/$VER/changes/ holds no change sentence"; exit 1; fi
             PUBLISH=true
             printf '%s\n' "$VER" > VERSION
-          elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${{ inputs.upstream_release }}" = "true" ]; then
+          elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "$UPSTREAM_RELEASE" = true ]; then
             ahead=yes
             if [ -n "$SHIPPED_UP" ]; then
               newest=$(printf '%s\n%s\n' "$SHIPPED_UP" "$UP" | sort -V | tail -1)
@@ -135,7 +149,7 @@ jobs:
             else
               VER="$(sh "$SHIPYARD_SCRIPTS/resolve-version.sh")"; PUBLISH=true
             fi
-          elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${{ inputs.local_release }}" = "true" ]; then
+          elif [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "$LOCAL_RELEASE" = true ]; then
             VER="$(sh "$SHIPYARD_SCRIPTS/resolve-version.sh" local)"
             PUBLISH=true
           else
@@ -146,182 +160,228 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
-      - name: Install the pinned Longboat and its 10.9 SDK
-        run: |
-          set -eu
-          lb="$(tr -d '[:space:]' < components/longboat/version)"
-          sh "$SHIPYARD_SCRIPTS/fetch-release-pkg.sh" longboat "$lb" "longboat-$lb.pkg" "$RUNNER_TEMP/longboat"
-          sudo installer -pkg "$RUNNER_TEMP/longboat/longboat-$lb.pkg" -target /
-          sudo /usr/local/mavergreen/longboat/bin/longboat sdk install 10.9
-
-      - name: Install patched Go (mavericks-golang cross toolchain)
-        run: |
-          # Pin lives in components/golang/version (a watchable path -- see ci.yml's copy of this note
-          # and repackage-on-ingredient-bump.yml). Verified against golang's published SHA256SUMS.
-          ver="$(cat components/golang/version)"
-          gover="${ver%%-mavericks.*}"; rev="${ver#*-}"
-          # The Go line (e.g. 1.27.2 -> 127: repo golang-127, product go127-cross) is derived from the pin,
-          # so moving to the next line is the pin plus renovate.json's packageNameTemplate, nothing here.
-          line="$(printf '%s' "$gover" | cut -d. -f1,2 | tr -d .)"
-          base="https://github.com/Mavergreen/golang-${line}/releases/download/${ver}"
-          sums="$RUNNER_TEMP/SHA256SUMS"
-          . "$SHIPYARD_SCRIPTS/mavericks_fetch.sh"
-          shipyard_curl "$base/SHA256SUMS" "$sums"
-          cand="golang-${gover}-cross-${rev}.pkg"
-          hash="$(awk -v f="$cand" '$2==f {print $1}' "$sums")"
-          [ -n "$hash" ] || { echo "::error::no $cand in golang-${line} ${ver} SHA256SUMS"; exit 1; }
-          pkg="$RUNNER_TEMP/$cand"
-          shipyard_curl "$base/$cand" "$pkg"
-          printf '%s  %s\n' "$hash" "$pkg" | shasum -a 256 -c -
-          sudo installer -pkg "$pkg" -target /
-          echo "/usr/local/mavergreen/go${line}-cross/bin" >> "$GITHUB_PATH"
-          echo "GO_LINE=$line" >> "$GITHUB_ENV"
-
-      - name: Confirm the patched cross toolchain is on PATH
-        run: |
-          test "$(command -v go)" = "/usr/local/mavergreen/go${GO_LINE}-cross/bin/go"
-          go version
-
-      - name: Build + gate the three Go binaries (x86_64 / min-10.9 / no post-10.9 imports)
+      - name: Cross-build the three Go binaries for 10.9 with the Linux-hosted go127-cross
         run: |
           shipyard-cmake --preset cross
           shipyard-cmake --build --preset cross
-          shipyard-ctest --preset cross
 
-      - name: Build the Sparkle updater (must not link tailscale)
-        run: |
-          shipyard-cmake -S updater -B "$MAVERICKS_BUILD_ROOT/tailscale-updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
-          shipyard-cmake --build "$MAVERICKS_BUILD_ROOT/tailscale-updater"
-          BIN="$MAVERICKS_BUILD_ROOT/tailscale-updater/tailscale-updater.app/Contents/MacOS/tailscale-updater"
-          otool -L "$BIN" | tee /tmp/o.txt
-          if otool -L "$BIN" | tail -n +2 | grep -iq tailscale; then
-            echo "::error::updater links a tailscale product (self-update circularity)"; exit 1; fi
+      - name: Locate the build
+        run: echo "BUILD=${TMPDIR:-/tmp}/mm-build/$(basename "$PWD")-cross" >> "$GITHUB_ENV"
+
+      # ctest: the compat guard on each binary (x86_64 / min-10.9 / no post-10.9 imports, read with
+      # clang22's Mach-O readers), the install hooks, and the upstream notes lookup.
+      - name: Run the repo's tests
+        run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh" cross
 
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
-      # Bundle the packaging inputs into ONE tarball so executable bits (the binaries, the updater .app's
-      # Mach-Os) survive the artifact round-trip -- artifacts otherwise drop file modes.
-      - name: Stage + upload packaging inputs
-        run: |
-          export COPYFILE_DISABLE=1
-          mkdir -p stage
-          ls -l "$CROSS_BUILD_DIR/gobin"
-          cp "$CROSS_BUILD_DIR/gobin/tailscaled"        stage/tailscaled
-          cp "$CROSS_BUILD_DIR/gobin/tailscale"         stage/tailscale
-          cp "$CROSS_BUILD_DIR/gobin/tailscale-systray" stage/tailscale-systray
-          cp -R "$MAVERICKS_BUILD_ROOT/tailscale-updater/tailscale-updater.app" stage/tailscale-updater.app
-          find stage -name '._*' -delete 2>/dev/null || true
-          tar -C stage -czf packaging-inputs.tgz .
+      # One tarball, so the binaries' executable bits survive the artifact round-trip. It carries the
+      # three product binaries and the two test binaries tests/on-mavericks.sh runs on the guest.
+      - name: Hand the binaries to the package and on-target jobs, modes kept
+        run: tar -cf "$RUNNER_TEMP/gobin.tar" -C "$BUILD" gobin
+
       - uses: actions/upload-artifact@v7
         with:
-          name: packaging-inputs
-          path: packaging-inputs.tgz
+          name: gobin
+          if-no-files-found: error
+          retention-days: 3
+          path: ${{ runner.temp }}/gobin.tar
 
-  # Assemble + sign the product .pkg and render the signed appcast. Runs on macos-26 for
-  # pkgbuild/productbuild + the shared signer.
   package:
-    if: needs.build-macos.outputs.publish == 'true'
-    needs: [build-macos]
-    runs-on: macos-26
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VER: ${{ needs.build.outputs.version }}
+      PUBLISH: ${{ needs.build.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # generated notes diff ingredient pins against the previous release tag
-      - name: Install mavericks-shipyard
-        uses: Mavergreen/shipyard/.github/actions/install@v1
-      - uses: actions/download-artifact@v8
-        with: { name: packaging-inputs, path: dl }
+          persist-credentials: false
 
-      # Generate the single notes file ONCE: the Sparkle appcast <description> and the GitHub Release
-      # body are the same bytes, read twice (this step below, and publish-release.yml from the
-      # uploaded artifact). The generator decides new-upstream vs. repackage vs. packaging-only, and
-      # which ingredient pins moved, itself -- from the tags and repackage-on-ingredient-bump.yml's
-      # own `paths:` list -- so nothing here says which kind of release this is. This job's checkout
-      # is fresh (a separate runner), so it does NOT see the VERSION mutation build-macos made for a
-      # local_release repackage -- use the version build-macos decided.
-      - name: Generate release notes
-        env:
-          VER: ${{ needs.build-macos.outputs.version }}
+      - name: Read the clang22 pin
+        id: pins
+        run: echo "clang22=$(tr -d '[:space:]' < components/clang22/version)" >> "$GITHUB_OUTPUT"
+
+      - name: Install mavericks-shipyard and clang22
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+        with:
+          products: clang22@${{ steps.pins.outputs.clang22 }}
+
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "BUILD=$RUNNER_TEMP/tailscale" >> "$GITHUB_ENV"
+
+      - name: Pin the version the build job resolved
+        run: printf '%s\n' "$VER" > VERSION
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: gobin
+          path: ${{ runner.temp }}
+
+      - name: Unpack the built binaries
+        run: mkdir -p "$BUILD" && tar -xf "$RUNNER_TEMP/gobin.tar" -C "$BUILD"
+
+      - name: Build the Sparkle updater with clang22 (must not link tailscale)
+        run: echo "UPDATER=$(sh build/build-updater.sh "$VER" "$BUILD/updater")" >> "$GITHUB_ENV"
+
+      - name: Package the standalone archive and the .pkg derived from it
         run: |
           set -eu
-          mkdir -p dist
-          sh "$SHIPYARD_SCRIPTS/release-notes.sh" \
-            --tag "$VER" --version "$VER" \
-            --product Tailscale --min-os 10.9.5 --out dist/RELEASE_NOTES.md
-          echo "=== dist/RELEASE_NOTES.md ==="; cat dist/RELEASE_NOTES.md
+          mkdir -p "$BUILD/in" "$BUILD/dist"
+          # Wrap the systray binary into the menu-bar .app the package expects.
+          sh cmake/make_app.sh "$BUILD/gobin/tailscale-systray" "$BUILD/in/Mavericks Tailscale.app" "$VER" "$GITHUB_WORKSPACE/Tailscale.icns"
+          pkg="$(sh cmake/package_pkg.sh --out "$BUILD/dist/tailscale-$VER.pkg" --version "$VER" \
+            --tailscaled "$BUILD/gobin/tailscaled" --tailscale "$BUILD/gobin/tailscale" \
+            --systray-app "$BUILD/in/Mavericks Tailscale.app" --updater-app "$UPDATER" \
+            --daemon-plist "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscaled.plist" \
+            --systray-agent "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscale-systray.plist" \
+            --dist "$GITHUB_WORKSPACE/dist")"
+          [ -f "$pkg" ] || { echo "::error::package_pkg.sh did not print a pkg path: $pkg"; exit 1; }
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
 
-      - name: Assemble + sign the .pkg, render the appcast
+      - name: The package yields exactly the built binaries
+        run: sh tests/package-test.sh "$PKG" "$BUILD/gobin"
+
+      # Generate the single notes file ONCE: the Sparkle appcast <description> and the GitHub Release
+      # body are the same bytes, read twice (the signing step below, and publish-release.yml from the
+      # uploaded artifact). The generator decides new-upstream vs. repackage vs. packaging-only, and
+      # which ingredient pins moved, itself -- from the tags and repackage-on-ingredient-bump.yml's
+      # own `paths:` list -- so nothing here says which kind of release this is.
+      - name: Release notes
+        run: |
+          set -eu
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
+            --product Tailscale --min-os 10.9.5 --out "$BUILD/dist/RELEASE_NOTES.md"
+          echo "=== RELEASE_NOTES.md ==="; cat "$BUILD/dist/RELEASE_NOTES.md"
+
+      - name: clang22's Mach-O readers, for the steps that read the pkg
+        run: |
+          set -eu
+          CL="$(sh build/fetch-clang22.sh)"
+          { echo "LIPO=$CL/bin/llvm-lipo"; echo "OTOOL=$CL/bin/llvm-otool"; echo "NM=$CL/bin/llvm-nm"; echo "STRINGS=$CL/bin/llvm-strings"; } >> "$GITHUB_ENV"
+
+      - name: The standalone archive needs nothing else from Mavergreen
+        run: sh "$SHIPYARD_SCRIPTS/check-standalone-archive.sh" "$BUILD/dist/tailscale-$VER-macos-x86_64.tar.gz"
+
+      - name: Unsigned stand-in feeds (never published)
+        if: env.PUBLISH != 'true'
+        run: sh "$SHIPYARD_SCRIPTS/stand-in-feeds.sh" "$BUILD/dist" "$VER"
+
+      # Sign the .pkg + render the signed appcast (auto-fetches the prebuilt ed25519-sign). The
+      # enclosure points at the versioned release asset; the client /latest/ feed resolves to this
+      # full release immediately, so Sparkle clients pick it up right away.
+      - name: EdDSA-sign the .pkg + write tailscale.xml
+        if: env.PUBLISH == 'true'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh`
-          VER: ${{ needs.build-macos.outputs.version }}
         run: |
+          set -eu
           # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
           printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          . build/msc.sh
-          mkdir -p in dist
-          tar -C in -xzf dl/packaging-inputs.tgz          # restores executable bits
-          # Wrap the systray binary into the menu-bar .app the package expects.
-          sh cmake/make_app.sh in/tailscale-systray "in/Mavericks Tailscale.app" "$VER" "$GITHUB_WORKSPACE/Tailscale.icns"
-          PKG="dist/tailscale-$VER.pkg"
-
-          # dist/ in the repo holds the LaunchDaemon/Agent plists + pre/postinstall scripts.
-          sh cmake/package_pkg.sh --out "$PKG" --version "$VER" \
-            --tailscaled in/tailscaled --tailscale in/tailscale \
-            --systray-app "in/Mavericks Tailscale.app" --updater-app in/tailscale-updater.app \
-            --daemon-plist "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscaled.plist" \
-            --systray-agent "$GITHUB_WORKSPACE/dist/dev.mavergreen.tailscale-systray.plist" \
-            --dist "$GITHUB_WORKSPACE/dist"
-
-          # Verify the 10.9.5 floor on the CI-built .pkg before signing/publishing.
-          W=$(mktemp -d); pkgutil --expand "$PKG" "$W/x"
-          grep -q '<os-version min="10.9.5"/>' "$W/x/Distribution" \
-            || { echo "::error::.pkg is missing the 10.9.5 install floor"; exit 1; }
-
-          # Sign the .pkg + render the signed appcast (auto-fetches the prebuilt ed25519-sign). The
-          # enclosure points at the versioned release asset; the client /latest/ feed resolves to this
-          # full release immediately, so Sparkle clients pick it up right away.
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
           sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" \
-            --product tailscale --feed-dir dist \
-            --channel-title "Tailscale for Mavericks" \
-            --version "$VER" --pkg-url "$URL" --min-os 10.9.5 \
-            --notes-file dist/RELEASE_NOTES.md --pkg "$PKG"
-          echo "=== tailscale.xml ==="; cat dist/tailscale.xml
-      # No SHA256SUMS here: publish-release.yml regenerates it over everything it attaches, so the
-      # checksums cover the appcast too and no repo hand-rolls that step.
-      # Conformance: the .pkg, the appcast and the version we are about to publish must agree with each
-      # other and with the family's schemes. Each piece is checked somewhere already; nothing asserted
-      # they agree. This job only runs when publishing, so no extra gate is needed here.
+            --product tailscale --feed-dir "$BUILD/dist" \
+            --channel-title "Tailscale for Mavericks" --version "$VER" \
+            --pkg-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")" \
+            --notes-file "$BUILD/dist/RELEASE_NOTES.md" --pkg "$PKG" --min-os 10.9.5
+
+      # No SHA256SUMS here: publish-release.yml regenerates it over everything it attaches.
+      # Conformance: the .pkg, the standalone archive, the appcast and the version must agree with each
+      # other and with the family's schemes (the 10.9.5 floor among them).
       - name: Artifact conformance
-        env:
-          VER: ${{ needs.build-macos.outputs.version }}
         run: |
-          sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" dist "$VER" \
+          sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" "$BUILD/dist" "$VER" \
             | sh "$SHIPYARD_SCRIPTS/check-artifact-conformance.sh"
-          # Behavior gate: a client on the previous release must actually SEE this as an upgrade -- a
-          # numeric sparkle:version that orders strictly after the last published one. The conformance
-          # check above verifies artifacts AGREE; it never exercised update ordering, which is the gap
-          # the "-mavericks.N compares EQUAL -> you're up to date" bug shipped straight through.
-          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/tailscale.xml --version "$VER"
+
+      # Behavior gate: a client on the previous release must actually SEE this as an upgrade -- a
+      # numeric sparkle:version that orders strictly after the last published one.
+      - name: The feed is an upgrade on its line
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "$BUILD/dist/tailscale.xml" --version "$VER"
+
+      - name: The package job must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
       - uses: actions/upload-artifact@v7
         with:
           name: tailscale-pkg
-          path: |
-            dist/*.pkg
-            dist/tailscale.xml
-            dist/RELEASE_NOTES.md
+          if-no-files-found: error
+          path: ${{ env.BUILD }}/dist/*
+
+  # spec: tests/on-mavericks.sh -- the cross-built binaries run as root on a real 10.9.5 guest
+  #       (Mavergreen/mavericks-vm): they load, hostinfo reports the OS version, tailscaled comes up on
+  #       a utun and stops cleanly, and the exit-node tests select and deselect an exit node against
+  #       that kernel's routing table; certstore signs and reads certificate chains. Then the run's own
+  #       pkg installs, its manifest names this run's version and what it installed runs, and the
+  #       standalone archive's binaries run from wherever it is unpacked. A skip (77) fails here: this
+  #       job exists so that it runs. A fork's pull request gets no secrets, so cannot boot the guest:
+  #       it skips this, and since a skipped job passes the required gate, a fork's PR is merged by a
+  #       maintainer who has run it.
+  on-target:
+    needs: [build, package]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write   # mavericks-vm's shared image cache
+    env:
+      VER: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: gobin
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: tailscale-pkg
+          path: dist
+      - name: Bring the binaries into the workspace the guest gets
+        run: tar -xf "$RUNNER_TEMP/gobin.tar" -C .
+      - uses: Mavergreen/mavericks-vm@v1
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          copyback: false
+          debug-on-error: true
+          envs: 'VER'
+          run: |
+            set -eu
+            sw_vers
+            status=0; sudo sh tests/on-mavericks.sh gobin || status=$?
+            [ "$status" -eq 0 ] || { echo "tests/on-mavericks.sh exited $status (77 is a skip, a failure here)"; exit 1; }
+            sudo installer -pkg "dist/tailscale-$VER.pkg" -target /
+            got="$(sed -n '/<key>version<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' /usr/local/mavergreen/tailscale/mavergreen.plist | sed -n 1p)"
+            [ "$got" = "$VER" ] || { echo "FAIL: the installed tailscale manifest says '$got', this run built $VER"; exit 1; }
+            /usr/local/mavergreen/tailscale/bin/tailscale version
+            /usr/local/mavergreen/tailscale/sbin/tailscaled --version
+            "/Applications/Mavericks Tailscale.app/Contents/MacOS/tailscale-systray" -h 2>&1 | grep -q -- '-socket'
+            echo "ok   the pkg installs $VER and its binaries run"
+            x="$(mktemp -d "/tmp/tailscale standalone.XXXXXX")"
+            tar -xzf "dist/tailscale-$VER-macos-x86_64.tar.gz" -C "$x"
+            "$x/tailscale-$VER/bin/tailscale" version
+            "$x/tailscale-$VER/sbin/tailscaled" --version
+            echo "ok   the standalone archive's binaries run from $x"
 
   # Before anything is published: no log of this run, and no file about to be released, carries a
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
   # release; it cannot run the scan itself (reading job logs needs actions: read).
-  # needs build-macos too, only so the `if:` below can read its outputs.
+  # needs build too, only so the `if:` below can read its outputs.
   scan:
-    if: always() && (needs.build-macos.outputs.publish == 'true')   # a build that fails after signing left logs too; scan them
-    needs: [build-macos, package]
+    if: always() && (needs.build.outputs.publish == 'true')   # a build that fails after signing left logs too; scan them
+    needs: [build, package]
     permissions:
       actions: read     # this run's job logs
       contents: read
@@ -331,18 +391,37 @@ jobs:
     secrets:
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
 
-  # All-or-nothing publish: the ONLY writer to Releases, gated on package. The shared workflow owns
-  # the mechanics -- it regenerates SHA256SUMS, uses RELEASE_NOTES.md from the artifact as the body
+  # All-or-nothing publish: the ONLY writer to Releases, gated on package and the 10.9 guest. The
+  # shared workflow regenerates SHA256SUMS, uses RELEASE_NOTES.md from the artifact as the body
   # (failing if it is missing or empty), and mints the tag at this commit via tag_name +
   # target_commitish, which a dispatch-cut repackage needs since a GITHUB_TOKEN-pushed tag triggers
-  # nothing. Six lines here instead of a bespoke publish job is the point: the wiring that decides
-  # whether anyone ever reads the notes is no longer per-repo.
+  # nothing.
   publish:
-    if: needs.build-macos.outputs.publish == 'true'
-    needs: [build-macos, package, scan]
+    if: needs.build.outputs.publish == 'true'
+    needs: [build, package, on-target, scan]
     permissions:
       contents: write
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
-      version: ${{ needs.build-macos.outputs.version }}
+      version: ${{ needs.build.outputs.version }}
       artifact: tailscale-pkg
+
+  retry:
+    needs: [build, publish]
+    if: always() && needs.publish.result == 'failure'
+    permissions:
+      contents: read
+      actions: write
+    uses: Mavergreen/shipyard/.github/workflows/retry-release.yml@v1
+    with:
+      version: ${{ needs.build.outputs.version }}
+
+  required:
+    name: required (release)
+    if: always()
+    needs: [build, package, on-target, scan, publish, retry]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Mavergreen/shipyard/.github/actions/required-gate@v1
+        with:
+          needs: ${{ toJSON(needs) }}

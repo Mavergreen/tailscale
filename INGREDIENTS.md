@@ -8,10 +8,11 @@ upstream, via `.github/workflows/repackage-on-ingredient-bump.yml`.
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
 | Tailscale source (own upstream) | `components/tailscale/version` (`REPO=` + `REF=`) | ✅ `github-tags`, **stable-only** (see below) | `release-on-bump.yml` asks `release.yml` to cut `<upstream>-mavericks.1`, forward-only |
-| Mavergreen Go cross toolchain | `components/golang/version` | ✅ `github-releases` on `Mavergreen/golang-127` (one Go line; moving lines is a hand edit of the pin + `packageNameTemplate`) | watched path → repackage dispatched → `-mavericks.(N+1)` rebuilt on the new Go |
+| Mavergreen Go cross toolchain (go127-cross; its runtime and Recaulk's `librecaulk.a` are linked in) | `components/golang/version` | ✅ `github-releases` on `Mavergreen/golang-127`, `-mavericks.N` versioning (one Go line; moving lines is a hand edit of the pin + `depNameTemplate`) | watched path → repackage dispatched → `-mavericks.(N+1)` rebuilt on the new Go |
 | Recaulk's headers (`include/recaulk`, for cgo; the toolchain's CC wrapper links its `librecaulk.a` but adds no include path) | derived, not pinned: `build_tailscale.sh` reads `recaulk_version` from the pinned golang release's `build-info-native.txt` and fetches that Recaulk release, refusing it unless its `librecaulk.a` is the toolchain's | moves with the golang pin | rides the golang repackage |
-| Longboat (CI only: `ci.yml` and `release.yml` install it and run `longboat sdk install 10.9` before the Go cross pkg, which requires it; nothing of it ships) | `components/longboat/version` | ✅ `github-releases` on `Mavergreen/longboat`, `YYYYMMDD.N` versioning | no release: excluded from `repackage-on-ingredient-bump.yml`'s paths |
-| MacOSX10.9 SDK, Sparkle framework | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
+| clang22 (go127-cross's CC wrapper links every binary through it; it compiles and links the Sparkle updater, x86_64 at 10.9; its `llvm-*` tools read the Mach-O for the compat guard and conformance) | `components/clang22/version` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | watched path → repackage dispatched → `-mavericks.(N+1)` |
+| MacOSX10.9 SDK (sdk109, which install@v1 provisions as go127-cross's require), packaging and signing scripts | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a *moving* tag: content changes without the pin changing, so nothing auto-repackages |
+| Sparkle, in the updater | shipyard's `fetch_sparkle_framework.sh`, pinned by hash there | ❌ untrackable here: shipyard owns that pin | follows shipyard |
 
 ## Carried changes
 
@@ -32,8 +33,23 @@ upstream, via `.github/workflows/repackage-on-ingredient-bump.yml`.
   has no RSA-PSS primitive), so tailscaled's machine-certificate signing, which uses RSA-PSS, still
   cannot sign there.
 
-Not ingredients: `cmake/`, `dist/` (the LaunchDaemon/Agent plists and pre/postinstall scripts), and the
-updater are this repo's own recipe. A change there is a repackage you cut deliberately.
+Not ingredients: `cmake/`, `build/`, `packaging/`, `dist/` (the LaunchDaemon/Agent plists and
+pre/postinstall scripts), and the updater's public key are this repo's own recipe. A change there is a
+repackage you cut deliberately.
+
+## Where it builds
+
+Everything builds on Linux (`ubuntu-latest`): the three Go binaries with go127-cross, the updater with
+clang22 through shipyard's `build_updater.sh`, and the standalone archive and the pkg through shipyard's
+stevedore seams (`stage_standalone.sh`, `stage_pkg_from_archive.sh`, `stage_product.sh`,
+`build_component_pkg.sh`, `set_install_floor.sh`). The only Mac in the release is the 10.9 guest
+(`Mavergreen/mavericks-vm`, run from a Linux runner) that `on-target` installs and runs them on.
+
+Tailscale ships x86_64 only, for 10.9, and so does its updater: there is no arm64 slice, so no
+`modern-smoke` job and no macOS runner. The standalone archive, `tailscale-<version>-macos-x86_64.tar.gz`,
+holds `tailscaled`, the CLI and the menu-bar app; the pkg is derived from it
+(`packaging/tailscale.standalone-bundled` bundles nothing) and adds the updater, the launchd jobs and
+the install scripts.
 
 ## Why the tailscale pin is stable-only
 
@@ -52,9 +68,5 @@ stable track; without it an unstable tag would auto-open a bump PR for a release
 Neither commits a version bump to `main`, and that is not an aesthetic choice: **branch protection here
 requires a status check that a fresh bot commit cannot have**, so the old commit-then-push-a-tag shape
 was rejected outright (`GH006: Required status check "Cross-build + compat gate (macos-26)" is
-expected`) and cut no release at all. Both paths publish inline, with the tag minted by
+expected`, the macOS build job that `required (release)` has since replaced) and cut no release at all. Both paths publish inline, with the tag minted by
 `action-gh-release` at the built commit.
-
-## Conformance deviations
-
-- on-target: its 10.9 job (on-mavericks) runs in ci.yml, which publish cannot need; exit: move that job into release.yml and have publish need it
