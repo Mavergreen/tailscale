@@ -68,5 +68,5 @@ stable track; without it an unstable tag would auto-open a bump PR for a release
 Neither commits a version bump to `main`, and that is not an aesthetic choice: **branch protection here
 requires a status check that a fresh bot commit cannot have**, so the old commit-then-push-a-tag shape
 was rejected outright (`GH006: Required status check "Cross-build + compat gate (macos-26)" is
-expected`, the macOS build job that `required (release)` has since replaced) and cut no release at all. Both paths publish inline, with the tag minted by
+expected`; that macOS job is gone, and `required (release)` is now the required check) and cut no release at all. Both paths publish inline, with the tag minted by
 `action-gh-release` at the built commit.
