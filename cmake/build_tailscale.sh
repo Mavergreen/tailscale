@@ -56,7 +56,11 @@ RECAULK_VERSION="$(sed -n 's/^recaulk_version=//p' "$INFO")"
 RECAULK="$(sh "$SCRIPTS/fetch_product_pkg.sh" recaulk "$RECAULK_VERSION" "$WORK/recaulk")"
 cmp -s "$RECAULK/lib/librecaulk.a" "$("$GO" env GOROOT)/lib/librecaulk.a" \
   || { echo "FATAL: $GO does not link Recaulk $RECAULK_VERSION's librecaulk.a, so its headers would not match" >&2; exit 1; }
-export CGO_CFLAGS="-O2 -g -isystem $RECAULK/include/recaulk"
+# -ffile-prefix-map: the C debug info names Recaulk's headers by their resolved path (macOS's TMPDIR
+# resolves to /private/var/...), so map both spellings to one fixed name; then it is the same on every
+# host (with -trimpath below, the Go side is too).
+WORK_REAL="$(cd "$WORK" && pwd -P)"
+export CGO_CFLAGS="-O2 -g -isystem $RECAULK/include/recaulk -ffile-prefix-map=$WORK_REAL=/mavericks-tailscale-work -ffile-prefix-map=$WORK=/mavericks-tailscale-work"
 
 # 4. Build each binary. -linkmode=external routes even pure-Go binaries through go.env's min-10.9 CC
 #    wrapper (Go 1.26 internal-links them to a 12.0 floor otherwise -- see mavericks-golang).
