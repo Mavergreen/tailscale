@@ -1,7 +1,7 @@
 #!/bin/sh
 # platform: macOS-only -- runs the built tailscale binaries, as root, on a real Mac OS X 10.9
 # What our patches change, exercised on a real 10.9. CI runs it on a Mavergreen/mavericks-vm guest
-# (ci.yml's on-mavericks job); it runs as well on any 10.9 box:
+# (release.yml's on-target job); it runs as well on any 10.9 box:
 #   sudo sh tests/on-mavericks.sh <dir holding tailscaled, tailscale, tailscale-systray, osrouter.test, certstore.test>
 # A build leaves them in its gobin/ ($MAVERICKS_BUILD_ROOT/<checkout>-<preset>/gobin). Step 4 briefly
 # sends this machine's traffic into a tunnel nothing reads; step 5 briefly adds a temporary keychain to
