@@ -72,7 +72,9 @@ LD="-linkmode=external -X tailscale.com/version.longStamp=$SHORT -X tailscale.co
 for spec in tailscaled:./cmd/tailscaled tailscale:./cmd/tailscale tailscale-systray:./cmd/systray; do
   name=${spec%%:*}; pkg=${spec#*:}
   echo ">> build $name"
-  "$GO" build -ldflags "$LD" -o "$OUT/$name" "$pkg"
+  # -trimpath: Go stamps CGO_CFLAGS, which names this host's Recaulk path, into the binary unless
+  # it trims; trimmed, a 10.9 box and a Linux runner build the same bytes from the same commit.
+  "$GO" build -trimpath -ldflags "$LD" -o "$OUT/$name" "$pkg"
   [ -f "$OUT/$name" ] || { echo "FATAL: no $name produced" >&2; exit 1; }
 done
 # 5. The exit-node code's tests and certstore's signing/trust tests, as 10.9 binaries: run by ctest on
