@@ -1,12 +1,12 @@
 #!/bin/sh
-# platform: macOS-only -- links CGO Mach-O binaries through the Mavergreen Go toolchain's Apple-clang/10.9-SDK CC wrapper
+# platform: host-agnostic -- the Mavergreen Go toolchain's go.env CC wrapper links the cgo Mach-O through clang22, on Linux, a modern Mac and 10.9
 # Build tailscaled / tailscale / tailscale-systray for darwin/amd64 min-10.9 with the Mavergreen
-# Go toolchain (its go.env default CC wrapper supplies the 10.9 SDK + target flags + Recaulk's
+# Go toolchain (its go.env default CC wrapper supplies clang22, the 10.9 SDK + target flags + Recaulk's
 # librecaulk.a + -Wl,-U weak-symbol allowances, but no include path; step 3 adds Recaulk's headers).
 # Applies our vendored subset: patches/ = source-tree tweaks, overlays/ = third-party-module changes.
 #   $1 SRC      pinned clone (read-only reference)
 #   $2 OUT      output dir (binaries land here; a wrksrc/ copy is built alongside)
-#   $3 GO       go binary (the Mavergreen golang .pkg)
+#   $3 GO       go binary (the Mavergreen golang .pkg, or go<line>-cross)
 #   $4 ROOT     repo root (for patches/, overlays/, components/golang/version and tests/certstore/)
 #   $5 VER      product version (longStamp)
 #   $6 SCRIPTS  shipyard's scripts directory (fetch-release-pkg.sh, fetch_product_pkg.sh)
@@ -24,7 +24,7 @@ export COPYFILE_DISABLE=1   # no ._ sidecars when copying off the NFS source
 # `toolchain` directive. Stock Go isn't 10.9-safe (its own binary references post-10.9 symbols, and it
 # lacks our CC wrapper), so an auto-download would silently escape the Mavergreen toolchain and
 # yield binaries of unknown 10.9-safety. With GOTOOLCHAIN=local, a tailscale version that needs a newer
-# Go than our pinned line FAILS LOUDLY here -- which (via ci.yml) correctly blocks the Renovate bump until
+# Go than our pinned line FAILS LOUDLY here -- which (via release.yml) correctly blocks the Renovate bump until
 # the pin moves to a Mavergreen golang line that has it, instead of shipping a non-10.9 build.
 export GOTOOLCHAIN=local
 mkdir -p "$WORK" "$OUT"
