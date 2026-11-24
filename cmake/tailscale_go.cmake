@@ -59,21 +59,21 @@ add_custom_command(
 add_custom_target(tailscale_binaries ALL DEPENDS ${TS_BINS})
 
 # 3. Compat gate per binary: x86_64 + min-10.9 + Recaulk's back-fills defined + no post-10.9 imports.
-#    assert_binary_compatible.sh is the shipyard gate (honors MAVERICKS_REQUIRE_DEFINED_SYMBOLS);
-#    the same script container-tools uses for its Go binaries. tailscaled signs through certstore.
+#    build/compat-guard.sh runs shipyard's assert_binary_compatible.sh with clang22's Mach-O readers,
+#    so the gate is the same on Linux, a modern Mac and 10.9. tailscaled signs through certstore.
 foreach(_b tailscaled tailscale tailscale-systray)
   set(_defined "_clock_gettime")
   if(_b STREQUAL "tailscaled")
     string(APPEND _defined "|_SecKeyCreateSignature|_SecTrustEvaluateWithError|_SecTrustCopyCertificateChain")
   endif()
   add_test(NAME compat_guard_${_b}
-    COMMAND ${CMAKE_COMMAND} -E env "MAVERICKS_REQUIRE_DEFINED_SYMBOLS=${_defined}"
-      sh "${MavericksShipyard_SCRIPTS}/assert_binary_compatible.sh" "${TS_GOBIN}/${_b}")
+    COMMAND ${CMAKE_COMMAND} -E env "SHIPYARD_SCRIPTS=${MavericksShipyard_SCRIPTS}"
+      sh "${CMAKE_SOURCE_DIR}/build/compat-guard.sh" "${TS_GOBIN}/${_b}" "${_defined}")
 endforeach()
 
 # 4. The exit-node code's own tests (darwin-exit-nodes.patch) and certstore's signing and trust tests
 #    (tests/certstore), built for 10.9 like the product. A native build runs them here; a cross
-#    build's x86_64 binaries are run on a 10.9 guest by tests/on-mavericks.sh (ci.yml's on-mavericks
+#    build's x86_64 binaries are run on a 10.9 guest by tests/on-mavericks.sh (release.yml's on-target
 #    job), which also runs the root-only live-route test this one skips.
 if(MAVERICKS_TAILSCALE_MODE STREQUAL "native")
   add_test(NAME exit_node_tests COMMAND "${TS_GOBIN}/osrouter.test" -test.run "^TestDarwin" -test.v)

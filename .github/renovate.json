@@ -11,7 +11,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Track the tailscale source pin (REF + commit DIGEST) against upstream tailscale/tailscale. A REF bump (e.g. v1.102.0 -> v1.104.0) updates DIGEST too; clone_pinned.sh verifies the checkout against it. Waits for ci.yml (platformAutomerge:false) before auto-merge, then release-on-bump.yml auto-cuts the MM tag (forward-only).",
+      "description": "Track the tailscale source pin (REF + commit DIGEST) against upstream tailscale/tailscale. A REF bump (e.g. v1.102.0 -> v1.104.0) updates DIGEST too; clone_pinned.sh verifies the checkout against it. Waits for release.yml's required gate (platformAutomerge:false) before auto-merge, then release-on-bump.yml auto-cuts the MM tag (forward-only).",
       "managerFilePatterns": ["/^components/tailscale/version$/"],
       "matchStrings": ["REPO=(?<packageName>\\S+?)\\.git\\s+REF=(?<currentValue>v\\S+)\\s+DIGEST=(?<currentDigest>[0-9a-f]{40})"],
       "depNameTemplate": "tailscale-source",
@@ -20,23 +20,21 @@
     },
     {
       "customType": "regex",
-      "description": "Track the Mavergreen Go cross toolchain pin, on ONE Go line (golang-127). Moving to the next line is a hand edit of this packageNameTemplate plus the pin: ci.yml, release.yml and CMakeLists.txt derive the line from the pin. It lives in a FILE, not a workflow env line, so a bump is a path repackage-on-ingredient-bump.yml can watch and turn into a -mavericks.(N+1) repackage.",
+      "description": "The Go toolchain pin: a Mavergreen/golang-127 release tag, bare. release.yml installs go127-cross at it through install@v1 `products:`; moving to the next Go line is a hand edit of this depNameTemplate plus the pin, since CMakeLists.txt derives the line from the pin. A bump is a path repackage-on-ingredient-bump.yml watches and turns into a -mavericks.(N+1) repackage.",
       "managerFilePatterns": ["/^components/golang/version$/"],
-      "matchStrings": ["^(?<currentValue>.+?)\\s*$"],
-      "depNameTemplate": "mavericks-golang",
-      "packageNameTemplate": "Mavergreen/golang-127",
+      "matchStrings": ["^(?<currentValue>\\S+)\\s*$"],
+      "depNameTemplate": "Mavergreen/golang-127",
       "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v?(?<version>.+)$",
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
     },
     {
       "customType": "regex",
-      "description": "longboat, CI only: ci.yml and release.yml install it and its 10.9 SDK before the Go cross pkg, which requires it. Nothing of it ships, so a bump re-runs CI and releases nothing.",
-      "managerFilePatterns": ["/^components/longboat/version$/"],
+      "description": "The clang22 release that builds the Sparkle updater and that go127-cross links through: a Mavergreen/clang-22 release tag, bare.",
+      "managerFilePatterns": ["/^components/clang22/version$/"],
       "matchStrings": ["^(?<currentValue>\\S+)\\s*$"],
-      "depNameTemplate": "Mavergreen/longboat",
+      "depNameTemplate": "Mavergreen/clang-22",
       "datasourceTemplate": "github-releases",
-      "versioningTemplate": "regex:^(?<major>\\d{8})\\.(?<minor>\\d+)$"
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
     }
   ]
 }

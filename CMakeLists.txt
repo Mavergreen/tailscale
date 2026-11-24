@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.15)
 
 project(mavericks_tailscale LANGUAGES NONE)
 # LANGUAGES NONE: nothing is compiled by CMake here. The real 10.9/x86_64 enforcement is the go build
-# flags + the compat_guard gate. The ObjC Sparkle updater is built by shipyard's stage_updater.sh.
+# flags + the compat_guard gate. The ObjC Sparkle updater is built by build/build-updater.sh.
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9)
 set(CMAKE_OSX_ARCHITECTURES x86_64)
 
-# The Go line (e.g. 1.27.2-mavericks.1 -> 127) is derived from the toolchain pin, as ci.yml/release.yml do,
+# The Go line (e.g. 1.27.2-mavericks.1 -> 127) is derived from the toolchain pin,
 # so moving to the next line is the pin plus renovate.json, nothing here.
 file(STRINGS "${CMAKE_SOURCE_DIR}/components/golang/version" _gopin LIMIT_COUNT 1)
 if(NOT _gopin MATCHES "^([0-9]+)\\.([0-9]+)\\.")
@@ -16,7 +16,7 @@ set(MAVERICKS_TAILSCALE_GO_LINE "${CMAKE_MATCH_1}${CMAKE_MATCH_2}")
 
 # Build mode. "native" = building ON Mavericks 10.9 with that line's Mavergreen golang .pkg
 # (/usr/local/mavergreen/go<line>, whose go.env ships the CC wrapper: 10.9 SDK + target flags + Recaulk
-# + -Wl,-U weak-symbol allowances). "cross" = a modern host with go<line>-cross on PATH.
+# + -Wl,-U weak-symbol allowances). "cross" = Linux or a modern Mac, with go<line>-cross installed.
 # native REQUIRES the .pkg toolchain (its go.env wrapper), NOT pkgsrc's go (wrapper not upstreamed there).
 set(MAVERICKS_TAILSCALE_MODE "cross")
 set(MAVERICKS_TAILSCALE_NATIVE_GO "")
@@ -57,11 +57,18 @@ find_package(MavericksShipyard REQUIRED)
 # replaces still said 1.98.8-mavericks.1 while releases were at 1.102.0 -- two upstreams stale.
 mavericks_resolve_version(MAVERICKS_TAILSCALE_VERSION)
 
-# The Go compiler: the native go<line> .pkg on the box, or go<line>-cross on PATH for a cross build.
+# The Go compiler: the native go<line> .pkg on the box, or go<line>-cross where install@v1 `products:`
+# puts it, on Linux and a modern Mac alike.
+set(MAVERICKS_TAILSCALE_CROSS_GO "/usr/local/mavergreen/go${MAVERICKS_TAILSCALE_GO_LINE}-cross/bin/go"
+    CACHE FILEPATH "go<line>-cross's go, for a cross build")
 if(MAVERICKS_TAILSCALE_MODE STREQUAL "native")
   set(MAVERICKS_TAILSCALE_GO "${MAVERICKS_TAILSCALE_NATIVE_GO}")
 else()
-  set(MAVERICKS_TAILSCALE_GO "go")
+  if(NOT EXISTS "${MAVERICKS_TAILSCALE_CROSS_GO}")
+    message(FATAL_ERROR "A cross build needs ${MAVERICKS_TAILSCALE_CROSS_GO}: install go${MAVERICKS_TAILSCALE_GO_LINE}-cross@${_gopin} "
+      "(install@v1 `products:`, or shipyard's install-products.sh), or set MAVERICKS_TAILSCALE_CROSS_GO.")
+  endif()
+  set(MAVERICKS_TAILSCALE_GO "${MAVERICKS_TAILSCALE_CROSS_GO}")
 endif()
 
 set(MAVERICKS_TAILSCALE_SRC_CACHE "${CMAKE_SOURCE_DIR}/.srccache" CACHE PATH
